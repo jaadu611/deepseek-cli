@@ -1,22 +1,22 @@
 #!/usr/bin/env node
 const { chromium } = require('playwright');
-const { execSync }  = require('child_process');
-const blessed       = require('blessed');
+const { execSync } = require('child_process');
+const blessed = require('blessed');
 const { tools, getSystemPrompt } = require('./tools');
 
 // ── colors ────────────────────────────────────────────────────────────────────
-const R  = '\x1b[0m';
-const fg = (r,g,b) => `\x1b[38;2;${r};${g};${b}m`;
-const C  = {
-  body:      fg(200, 200, 200),
-  dim:       fg(110, 110, 110),
-  bold:      fg(255, 255, 255),
-  italic:    fg(160, 160, 160),
-  code:      fg(234, 234, 234),
-  bullet:    fg(110, 110, 110),
-  red:       fg(255, 255, 255),
-  you:       fg(56, 189, 248),   // sky blue
-  deepseek:  fg(52, 211, 153),   // emerald green
+const R = '\x1b[0m';
+const fg = (r, g, b) => `\x1b[38;2;${r};${g};${b}m`;
+const C = {
+  body: fg(200, 200, 200),
+  dim: fg(110, 110, 110),
+  bold: fg(255, 255, 255),
+  italic: fg(160, 160, 160),
+  code: fg(234, 234, 234),
+  bullet: fg(110, 110, 110),
+  red: fg(255, 255, 255),
+  you: fg(56, 189, 248),   // sky blue
+  deepseek: fg(52, 211, 153),   // emerald green
 };
 
 // ── wrapping utility ─────────────────────────────────────────────────────────
@@ -42,7 +42,7 @@ function renderMd(raw) {
   const width = chat && chat.width ? chat.width : (scr.width || 80);
   const limit = Math.max(20, width - 7);
   const lines = raw.trim().split('\n');
-  const out   = [];
+  const out = [];
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
@@ -157,13 +157,13 @@ function inline(s) {
   const b = C.body;
   // order matters: bold before italic
   return s
-    .replace(/`([^`]+)`/g,        C.code   + '$1' + R + b)
+    .replace(/`([^`]+)`/g, C.code + '$1' + R + b)
     .replace(/\*\*\*([^*]+)\*\*\*/g, '\x1b[1;3m' + C.bold + '$1' + R + b)
-    .replace(/\*\*([^*]+)\*\*/g,  '\x1b[1m'  + C.bold   + '$1' + R + b)
-    .replace(/\*([^*\n]+)\*/g,    '\x1b[3m'  + C.italic  + '$1' + R + b)
-    .replace(/~~([^~]+)~~/g,      '\x1b[9m'  + C.dim     + '$1' + R + b)
-    .replace(/__([^_]+)__/g,      '\x1b[1m'  + C.bold    + '$1' + R + b)
-    .replace(/_([^_\n]+)_/g,      '\x1b[3m'  + C.italic  + '$1' + R + b);
+    .replace(/\*\*([^*]+)\*\*/g, '\x1b[1m' + C.bold + '$1' + R + b)
+    .replace(/\*([^*\n]+)\*/g, '\x1b[3m' + C.italic + '$1' + R + b)
+    .replace(/~~([^~]+)~~/g, '\x1b[9m' + C.dim + '$1' + R + b)
+    .replace(/__([^_]+)__/g, '\x1b[1m' + C.bold + '$1' + R + b)
+    .replace(/_([^_\n]+)_/g, '\x1b[3m' + C.italic + '$1' + R + b);
 }
 
 // ── browser ───────────────────────────────────────────────────────────────────
@@ -187,7 +187,7 @@ async function getPage() {
 
   _initializing = (async () => {
     const browser = await chromium.connectOverCDP('http://localhost:9222');
-    const ctx     = browser.contexts()[0];
+    const ctx = browser.contexts()[0];
     let page = ctx.pages().find(p => p.url().includes('chat.deepseek.com'));
     if (!page) {
       page = await ctx.newPage();
@@ -233,16 +233,16 @@ async function submitPrompt(page, prompt) {
         sent = true;
         break;
       }
-    } catch {}
+    } catch { }
   }
   if (!sent) await page.keyboard.press('Enter');
 }
 
 // ── TUI ───────────────────────────────────────────────────────────────────────
 const scr = blessed.screen({
-  smartCSR:    true,
+  smartCSR: true,
   fullUnicode: true,
-  title:       'deepseek',
+  title: 'deepseek',
   // Don't let grabKeys block our scroll bindings
   ignoreLocked: ['C-c'],
 });
@@ -250,19 +250,19 @@ const scr = blessed.screen({
 // Chat history — scrollable box
 const chat = blessed.box({
   top: 0, left: 0, right: 0, bottom: 3,
-  scrollable:   true,
+  scrollable: true,
   alwaysScroll: true,
-  mouse:        true,
-  keys:         false,
-  tags:         false,   // raw ANSI passthrough
-  wrap:         false,
+  mouse: true,
+  keys: false,
+  tags: false,   // raw ANSI passthrough
+  wrap: false,
   scrollbar: {
-    ch:    ' ',
+    ch: ' ',
     style: { bg: '#3e4452' },
     track: { bg: 'default' },
   },
   padding: { left: 2, right: 2, top: 0 },
-  style:   { bg: 'default', fg: '#c8c8c8' },
+  style: { bg: 'default', fg: '#c8c8c8' },
 });
 
 // Input bar
@@ -271,10 +271,10 @@ const input = blessed.textbox({
   inputOnFocus: true,
   padding: { left: 3, right: 2 },
   style: {
-    bg:     'default',
-    fg:     '#c8c8c8',
+    bg: 'default',
+    fg: '#c8c8c8',
     border: { fg: '#3e4452' },
-    focus:  { border: { fg: '#ffffff' } },
+    focus: { border: { fg: '#ffffff' } },
   },
   border: { type: 'line' },
 });
@@ -294,7 +294,7 @@ function scrollUp(n) {
 }
 
 // ── spinner ───────────────────────────────────────────────────────────────────
-const FRAMES = ['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏'];
+const FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 let spinFrame = 0;
 let activeSpinners = 0;
 let globalSpinInterval = null;
@@ -330,13 +330,13 @@ function extractJSON(text) {
     try {
       const parsed = JSON.parse(candidate);
       if (parsed) return normalizeToolCall(parsed);
-    } catch {}
+    } catch { }
     const brace = candidate.match(/\{[\s\S]*\}/);
     if (brace) {
       try {
         const parsed = JSON.parse(brace[0]);
         if (parsed) return normalizeToolCall(parsed);
-      } catch {}
+      } catch { }
     }
   }
 
@@ -345,7 +345,7 @@ function extractJSON(text) {
     try {
       const parsed = JSON.parse(braceMatch[0]);
       if (parsed) return normalizeToolCall(parsed);
-    } catch {}
+    } catch { }
   }
   return null;
 }
@@ -385,7 +385,7 @@ function renderLog() {
       for (let i = 1; i < wrapped.length; i++) {
         itemLines.push(' '.repeat(3) + C.dim + wrapped[i] + R);
       }
-    } 
+    }
     else if (item.type === 'deepseek') {
       // Display response block
       if (item.text === '' && item.spinning) {
@@ -401,9 +401,9 @@ function renderLog() {
       } else if (!item.text && !item.spinning) {
         // Empty response, nothing to show
       }
-    } 
+    }
     else if (item.type === 'tool') {
-      const prefix = item.status === 'executing' 
+      const prefix = item.status === 'executing'
         ? C.dim + FRAMES[spinFrame % FRAMES.length] + ` executing ${item.name}...` + R
         : C.dim + `✔ ${item.name} ` + (item.expanded ? '(click to collapse)' : '(click to show output)') + R;
       itemLines.push(' '.repeat(3) + prefix);
@@ -477,8 +477,8 @@ async function ask(prompt) {
   startGlobalSpinner();
 
   try {
-    const page   = await getPage();
-    const count  = async () => page.locator('.ds-markdown').count();
+    const page = await getPage();
+    const count = async () => page.locator('.ds-markdown').count();
 
     let currentPrompt = `[System Instructions]\n${getSystemPrompt()}\n\n[User Request]\n${prompt}`;
     let isInitial = true;
@@ -502,8 +502,8 @@ async function ask(prompt) {
       if (!appeared) throw new Error('no response from deepseek (timeout)');
 
       const bubble = page.locator('.ds-markdown').last();
-      let printed  = 0;
-      let started  = false;
+      let printed = 0;
+      let started = false;
       let fullText = '';
 
       while (true) {
@@ -526,36 +526,10 @@ async function ask(prompt) {
 
             return findRawContent(el[key]) || el.textContent;
           });
-        } catch {
-          // Transient error, keep polling
-        }
+        } catch { /* ignore */ }
 
-        if (fullText.length > printed) {
-          if (!started) {
-            dsItem.spinning = false;
-            stopGlobalSpinner();
-            started = true;
-          }
-          printed = fullText.length;
-
-          let displayOutput = '';
-          const toolMatch = fullText.match(/"tool"\s*:\s*"([^"]*)/);
-          const responseMatch = fullText.match(/"response"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)/);
-
-          if (responseMatch) {
-            displayOutput = responseMatch[1].replace(/\\n/g, '\n').replace(/\\"/g, '"');
-          }
-
-          if (!displayOutput && fullText && !toolMatch && !fullText.trim().startsWith('{')) {
-            displayOutput = fullText;
-          }
-
-          dsItem.text = displayOutput;
-          renderLog();
-        }
-
-        // If full text is a complete parseable JSON with action fields, stop polling immediately
-        if (fullText.trim().startsWith('{')) {
+        // If the text is a complete JSON object with tool or response, stop polling
+        if (fullText && fullText.trim().startsWith('{')) {
           const parsed = extractJSON(fullText);
           if (parsed && (parsed.response !== undefined || parsed.tool)) {
             break;
@@ -568,18 +542,15 @@ async function ask(prompt) {
         stopGlobalSpinner();
       }
 
-            // Extract JSON response and display only the response field
+      // Extract JSON response and display only the response field
       const parsed = extractJSON(fullText);
       if (parsed && parsed.response) {
         dsItem.text = parsed.response;
         renderLog();
-      } else if (!parsed && fullText.trim()) {
-        // Fallback: display raw text if it's not JSON
-        let cleaned = fullText.trim();
-        if (cleaned && dsItem.text !== cleaned) {
-          dsItem.text = cleaned;
-          renderLog();
-        }
+      } else {
+        // Hide everything else – raw text, malformed JSON, or tool calls (tool output is shown separately)
+        dsItem.text = '';
+        renderLog();
       }
 
       // Now handle tool calls if present
@@ -651,12 +622,12 @@ async function ask(prompt) {
 // ── key bindings ──────────────────────────────────────────────────────────────
 // Bind scroll keys on the input widget itself — they fire even during readInput
 // because we intercept before grabKeys swallows them
-input.key(['pageup'],       () => scrollUp());
-input.key(['pagedown'],     () => scrollDown());
-input.key(['S-up'],         () => scrollUp(3));
-input.key(['S-down'],       () => scrollDown(3));
-input.key(['C-u'],          () => scrollUp());
-input.key(['C-d'],          () => scrollDown());
+input.key(['pageup'], () => scrollUp());
+input.key(['pagedown'], () => scrollDown());
+input.key(['S-up'], () => scrollUp(3));
+input.key(['S-down'], () => scrollDown(3));
+input.key(['C-u'], () => scrollUp());
+input.key(['C-d'], () => scrollDown());
 
 input.key('enter', () => {
   if (busy) return;
@@ -664,7 +635,7 @@ input.key('enter', () => {
   if (!val) return;
   input.clearValue();
   scr.render();
-  ask(val).catch(() => {});
+  ask(val).catch(() => { });
 });
 
 scr.key(['C-c'], () => process.exit(0));
@@ -672,7 +643,7 @@ scr.key(['C-c'], () => process.exit(0));
 // ── boot ──────────────────────────────────────────────────────────────────────
 if (require.main === module) {
   launchBrowser();
-  getPage().catch(() => {});
+  getPage().catch(() => { });
   input.focus();
   scr.render();
 } else {
