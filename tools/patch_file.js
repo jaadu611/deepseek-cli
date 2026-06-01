@@ -47,9 +47,13 @@ module.exports = {
         return `Error: The find_string matches ${occurrences} places in the file. Please provide more surrounding context lines to make it unique.`;
       }
 
+      // Write backup before modifying
+      fs.writeFileSync(resolvedPath + '.bak', content, 'utf8');
+
+      const lineNumber = content.slice(0, content.indexOf(find_string)).split('\n').length;
       const updatedContent = content.replace(find_string, replace_string);
       fs.writeFileSync(resolvedPath, updatedContent, 'utf8');
-      return `File patched successfully.`;
+      return `File patched successfully at line ~${lineNumber}. Backup saved to ${resolvedPath}.bak`;
     } catch (err) {
       return `Error patching file: ${err.message}`;
     }

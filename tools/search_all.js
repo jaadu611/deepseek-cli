@@ -27,12 +27,9 @@ module.exports = {
       const resolvedDir = directory ? path.resolve(directory) : process.cwd();
       let results = [];
 
-      // 1. If searching entire system, use 'locate' for instantaneous indexed results
+      // 1. If explicitly searching entire system, use 'locate' for indexed results
       if (resolvedDir === '/') {
-        const locateResult = spawnSync('locate', [
-          '-i',
-          pattern
-        ], { encoding: 'utf8' });
+        const locateResult = spawnSync('locate', ['-i', pattern], { encoding: 'utf8' });
 
         if (!locateResult.error && locateResult.status === 0) {
           const matched = locateResult.stdout.split('\n')
@@ -44,27 +41,28 @@ module.exports = {
         }
       }
 
-      // 2. Fallback to native 'find' if locate returned nothing, had an error, or a specific directory was targeted
+      // 2. Use 'find' for directory-scoped searches, or as fallback
       if (results.length === 0) {
         const findResult = spawnSync('find', [
           resolvedDir,
           '-iname',
-          `*${pattern}*`
+          `*${pattern}*`,
+          '!', '-path', '*/node_modules/*',
+          '!', '-path', '*/.git/*'
         ], { encoding: 'utf8' });
 
         if (!findResult.error && findResult.stdout) {
-          const matched = findResult.stdout.split('\n')
-            .filter(Boolean)
-            .filter(p => !p.includes('node_modules/') && !p.includes('.git/'));
+          const matched = findResult.stdout.split('\n').filter(Boolean);
           results = matched.slice(0, 100).map(p => `[Path] ${p}`);
         }
       }
 
       if (results.length === 0) {
-        return 'No matching files or folders found.';
+        return `No files or folders matching "${pattern}" found in ${resolvedDir}.`;
       }
 
-      return results.join('\n');
+      const summary = `Found ${results.length} result(s) for "${pattern}" in ${resolvedDir}:\n`;
+      return summary + results.join('\n');
     } catch (err) {
       return `Error searching: ${err.message}`;
     }

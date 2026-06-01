@@ -360,24 +360,60 @@ function extractJSON(text) {
   return null;
 }
 
-// Convert { "tool_name": { ...params } } into { tool: "tool_name", ...params }
-// while also preserving the { tool: "...", parameters: {...} } and { tool: "...", param: val } formats
+// Convert a parsed JSON object into a normalized tool call structure.
+//
+// Supported shapes (in priority order):
+//   1. { "tool": "<name>", ...params }                       — single tool (flat)
+//   2. { "name": "<name>", "parameters": { ... } }           — single tool (nested)
+//   3. { "<tool_name>": { ...params } }                      — single tool (key-as-name)
+//   4. { "response": "..." }                                 — final response (no tool)
+//   5. { "tools": [ { "name": "<n>", ...params }, ... ] }    — MULTI-tool (parallel)
+//      Each element may also use the { "<tool_name>": { ... } } shape.
+//
+// For single-tool shapes (1-3) the returned object mirrors the input but
+// guarantees a top-level "tool" key. For the multi-tool shape (5) the function
+// returns a sentinel object: { _isMulti: true, calls: [ {tool, ...params}, ... ] }.
 function normalizeToolCall(obj) {
   if (!obj || typeof obj !== 'object') return obj;
-  // Already has a "tool" key — return as-is
+  // Already has a "tool" key — return as-is (single tool, flat format)
   if (obj.tool) return obj;
-  // Has a "response" key — return as-is
+  // Has a "response" key — return as-is (final answer to the user)
   if (obj.response !== undefined) return obj;
-  // Handle { "name": "...", "parameters": {...} } format
+
+  // Multi-tool format: { "tools": [ ... ] }
+  if (Array.isArray(obj.tools)) {
+    const calls = obj.tools
+      .filter(t => t && typeof t === 'object')
+      .map(t => {
+        // Element shape: { "name": "<n>", ...params }
+        if (t.name) {
+          const { name, ...rest } = t;
+          return { tool: name, ...rest };
+        }
+        // Element shape: { "<tool_name>": { ...params } }
+        for (const key of Object.keys(t)) {
+          if (tools[key] && typeof t[key] === 'object' && t[key] !== null) {
+            return { tool: key, ...t[key] };
+          }
+        }
+        return null;
+      })
+      .filter(Boolean);
+
+    if (calls.length > 0) {
+      return { _isMulti: true, calls };
+    }
+  }
+
+  // Single-tool shape: { "name": "<n>", "parameters": { ... } }
   if (obj.name && obj.parameters && typeof obj.parameters === 'object') {
     const result = { ...obj.parameters };
     result.tool = obj.name;
     return result;
   }
-  // Check if any top-level key matches a known tool name
+  // Single-tool shape: { "<tool_name>": { ...params } }
   for (const key of Object.keys(obj)) {
     if (tools[key] && typeof obj[key] === 'object' && obj[key] !== null) {
-      // Format: { "read_file": { "path": "..." } }
       const params = obj[key];
       params.tool = key;
       return params;
@@ -593,10 +629,12 @@ async function ask(prompt) {
           });
         } catch { /* ignore */ }
 
-        // If the text contains a complete JSON object with tool or response, stop polling
+        // If the text contains a complete JSON object with tool, response, or a
+        // parallel "tools" array, stop polling. This is the main streaming
+        // exit condition and now covers the new multi-tool shape.
         if (fullText && fullText.length > 5) {
           const parsed = extractJSON(fullText);
-          if (parsed && (parsed.response !== undefined || parsed.tool)) {
+          if (parsed && (parsed.response !== undefined || parsed.tool || parsed._isMulti)) {
             break;
           }
         }
@@ -623,8 +661,9 @@ async function ask(prompt) {
             }
             dsItem.thinking = thinkingText || '';
             dsItem.text = streamParsed.response;
-          } else if (streamParsed && streamParsed.tool) {
-            // Tool call still incoming — extract thinking text
+          } else if (streamParsed && (streamParsed.tool || streamParsed._isMulti)) {
+            // Tool call (single or parallel batch) still incoming — capture
+            // any thinking text that appeared before the JSON object.
             const jsonStartIdx = fullText.indexOf('{');
             if (jsonStartIdx > 0) {
               thinkingText = fullText.substring(0, jsonStartIdx).trim();
@@ -656,15 +695,18 @@ async function ask(prompt) {
         dsItem._autoCollapseTimer = null;
       }
 
-      // Final render after loop ends — extract JSON response and display the response field
+      // Final render after loop ends — extract JSON response and display the
+      // response field. Three terminator shapes are recognised: a final
+      // "response" string, a single "tool" call, or a parallel "tools" array.
       const parsed = extractJSON(fullText);
       if (parsed && parsed.response) {
         // Preserve thinking text (renderLog applies red color to item.thinking)
         dsItem.text = parsed.response;
         if (thinkingText) dsItem.thinking = thinkingText;
         if (dsItem.thinking) dsItem._thinkingEndTime = Date.now();
-      } else if (parsed && parsed.tool) {
-        // Tool call — preserve thinking text (tool output shown separately)
+      } else if (parsed && (parsed.tool || parsed._isMulti)) {
+        // Tool call (single or parallel batch) — preserve thinking text
+        // (tool outputs are rendered as their own log items below).
         if (thinkingText) dsItem.thinking = thinkingText;
         if (dsItem.thinking) dsItem._thinkingEndTime = Date.now();
         dsItem.text = '';
@@ -683,8 +725,66 @@ async function ask(prompt) {
         renderLog();
       }
 
-      // Now handle tool calls if present
-      if (parsed && parsed.tool) {
+      // Now handle tool calls if present.
+      // Two flavors are supported:
+      //   - Single tool call:  parsed.tool === "<name>"
+      //   - Parallel batch:    parsed._isMulti === true  with parsed.calls: [{tool, ...}, ...]
+      if (parsed && parsed._isMulti) {
+        const calls = parsed.calls;
+
+        // Cap the number of parallel calls for safety / legibility.
+        const MAX_PARALLEL = 8;
+        const batchedCalls = calls.slice(0, MAX_PARALLEL);
+
+        // Build a log item for every call so each one is visible independently.
+        const toolItems = batchedCalls.map(c => ({
+          type: 'tool',
+          name: c.tool,
+          status: 'executing',
+          result: '',
+          expanded: false,
+        }));
+        for (const t of toolItems) logItems.push(t);
+        startGlobalSpinner();
+        renderLog();
+
+        // Execute all calls concurrently. Errors in one call must not abort the
+        // others, so wrap each in its own try/catch and resolve to a string.
+        const results = await Promise.all(batchedCalls.map(async (c) => {
+          const tool = tools[c.tool];
+          if (!tool) {
+            return `Error: Tool '${c.tool}' not found.`;
+          }
+          try {
+            const out = await tool.execute(c);
+            return out === undefined || out === null ? '' : String(out);
+          } catch (err) {
+            return `Error executing tool: ${err.message}`;
+          }
+        }));
+
+        // Attach results to their log items.
+        results.forEach((res, i) => {
+          toolItems[i].status = 'completed';
+          toolItems[i].result = res;
+        });
+        stopGlobalSpinner();
+        renderLog();
+
+        // Combine all outputs into one follow-up message so the model sees
+        // them together and can decide the next step in a single round trip.
+        const combined = results
+          .map((res, i) => `[Tool Output for ${batchedCalls[i].tool}]\n${res}`)
+          .join('\n\n');
+        const overflowNote = calls.length > MAX_PARALLEL
+          ? `\n\nNote: ${calls.length - MAX_PARALLEL} additional call(s) were truncated. Issue them in the next turn if still needed.`
+          : '';
+        currentPrompt = `${combined}${overflowNote}\n\nRemember to return your next response in valid JSON. You may issue a single tool call, a parallel "tools" array of independent calls, or a final "response" object.`;
+        isInitial = false;
+
+        dsItem = { type: 'deepseek', text: '', spinning: true };
+        logItems.push(dsItem);
+      } else if (parsed && parsed.tool) {
         const toolName = parsed.tool;
         // Support all parameter passing formats:
         //   {tool, parameters: {param1, param2}}  — nested

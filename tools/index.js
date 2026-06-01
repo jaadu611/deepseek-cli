@@ -12,6 +12,68 @@ for (const file of files) {
   }
 }
 
+// Convert a parsed JSON object into a normalized tool call structure.
+//
+// Supported shapes (in priority order):
+//   1. { "tool": "<name>", ...params }                       — single tool (flat)
+//   2. { "name": "<name>", "parameters": { ... } }           — single tool (nested)
+//   3. { "<tool_name>": { ...params } }                      — single tool (key-as-name)
+//   4. { "response": "..." }                                 — final response (no tool)
+//   5. { "tools": [ { "name": "<n>", ...params }, ... ] }    — MULTI-tool (parallel)
+//      Each element may also use the { "<tool_name>": { ... } } shape.
+//
+// For single-tool shapes (1-3) the returned object mirrors the input but
+// guarantees a top-level "tool" key. For the multi-tool shape (5) the function
+// returns a sentinel object: { _isMulti: true, calls: [ {tool, ...params}, ... ] }.
+function normalizeToolCall(obj) {
+  if (!obj || typeof obj !== 'object') return obj;
+  // Already has a "tool" key — return as-is (single tool, flat format)
+  if (obj.tool) return obj;
+  // Has a "response" key — return as-is (final answer to the user)
+  if (obj.response !== undefined) return obj;
+
+  // Multi-tool format: { "tools": [ ... ] }
+  if (Array.isArray(obj.tools)) {
+    const calls = obj.tools
+      .filter(t => t && typeof t === 'object')
+      .map(t => {
+        // Element shape: { "name": "<n>", ...params }
+        if (t.name) {
+          const { name, ...rest } = t;
+          return { tool: name, ...rest };
+        }
+        // Element shape: { "<tool_name>": { ...params } }
+        for (const key of Object.keys(t)) {
+          if (tools[key] && typeof t[key] === 'object' && t[key] !== null) {
+            return { tool: key, ...t[key] };
+          }
+        }
+        return null;
+      })
+      .filter(Boolean);
+
+    if (calls.length > 0) {
+      return { _isMulti: true, calls };
+    }
+  }
+
+  // Single-tool shape: { "name": "<n>", "parameters": { ... } }
+  if (obj.name && obj.parameters && typeof obj.parameters === 'object') {
+    const result = { ...obj.parameters };
+    result.tool = obj.name;
+    return result;
+  }
+  // Single-tool shape: { "<tool_name>": { ...params } }
+  for (const key of Object.keys(obj)) {
+    if (tools[key] && typeof obj[key] === 'object' && obj[key] !== null) {
+      const params = obj[key];
+      params.tool = key;
+      return params;
+    }
+  }
+  return obj;
+}
+
 function getSystemPrompt() {
   const toolDescriptions = Object.values(tools).map(tool => {
     return `Name: ${tool.name}\nDescription: ${tool.description}\nParameters: ${JSON.stringify(tool.parameters, null, 2)}`;
@@ -25,7 +87,7 @@ function getSystemPrompt() {
       activePlanContext = `\n\n[Active Implementation Plan]:\n${fs.readFileSync(planPath, 'utf8')}`;
     }
   } catch {}
-  
+
   try {
     const taskPath = path.join(process.cwd(), 'task.md');
     if (fs.existsSync(taskPath)) {
@@ -33,53 +95,42 @@ function getSystemPrompt() {
     }
   } catch {}
 
-  return `You are a fully autonomous CLI agent that acts directly on the host system using tools.
-CRITICAL: You must NEVER respond with plain conversational text under any circumstances. Every single response you produce MUST be a valid JSON block.
+  return `You are an autonomous agent with access to tools and the ability to think through problems step by step.
 
-If you need to use a tool, output the tool JSON exactly as shown below. Do NOT include any other fields.
+When you need to use a tool, output valid JSON in one of these formats:
 
-If you are done and want to respond to the user, output a JSON object with a "response" field containing your final answer. For example:
+Single tool call:
+{
+  "tool": "read_file",
+  "path": "main.js"
+}
 
+Parallel tool calls (for independent actions):
+{
+  "tools": [
+    { "name": "read_file", "path": "main.js" },
+    { "name": "list_directory", "path": "." }
+  ]
+}
+
+Final response to user:
 {
   "response": "Your answer here."
 }
 
-Do not include any extra fields like "thinking" or delimiters.
+Rules:
+- Every single response MUST be valid JSON. No exceptions — not for greetings, not for errors, not for thinking out loud. Always pick one shape per turn: "response", a single tool call, or a "tools" array. Plain text responses are a critical failure.- For dependent steps, call one tool at a time and inspect the output before the next call.
+- For independent steps, batch them into a "tools" array so they run in parallel.
+- Use non-interactive flags for shell commands (e.g. --noconfirm, -y) to avoid hanging on prompts.
 
 Available Tools:
 ${toolDescriptions}
 
-Rules:
-- You must always output valid JSON.
-- Never output anything outside the JSON block.
-- Execute actions incrementally. Call one tool at a time, check the output, and decide the next step.
-- When calling patch_file, make sure the find_string matches the target file exactly.
-- When executing shell commands, always use non-interactive/silent flags (e.g., pacman -S --noconfirm, npm install -y) to avoid execution hanging on interactive prompts.
-- Only generate the response to the user's request. Do not include any follow-up questions, request confirmation, or ask for next steps.
-- **NO EMOJIS:** Never use emojis in any response, tool output, or file content. Use plain text only.
-- **WORKFLOW FOR COMPLEX TASKS:**
-  1. First, use 'manage_plan' to create a high-level implementation plan with 3-7 major steps. Think carefully about the logical flow.
-  2. Then, use 'manage_task' to break down each major step from the plan into smaller, concrete, executable sub-tasks. Each sub-task should be a specific action (e.g., "read file X", "search for pattern Y", "write file Z").
-  3. As you execute each sub-task, update 'manage_task' immediately: mark completed sub-tasks as [x], mark in-progress as [/], and keep pending as [ ].
-  4. If you encounter an error or unexpected situation, update the plan and task list accordingly before proceeding.
-  5. Use the task.md checklist as your source of truth to track progress and ensure nothing is missed.
-- If a command fails or a tool returns an error, think about why it failed and try a different approach. Do not blindly retry the same action.
-- You have access to 'implementation_plan.md' (high-level strategy) and 'task.md' (detailed checklist). Both are automatically appended to your context. Use them to stay organized.
-- When starting a new unrelated task, note that previous plan/task files may have been auto-deleted. If they don't exist, create fresh ones.
-- **FINAL VALIDATION FOR CODING PROJECTS:** When working on a coding project, after completing all tasks, run an appropriate validation command based on the language:
-  * Node.js/JavaScript: 'npm test' or 'node -c main.js' or run the script to check for syntax errors
-  * Python: 'python -m py_compile file.py' or run 'pytest' if tests exist
-  * Go: 'go build' or 'go test'
-  * Rust: 'cargo check' or 'cargo test'
-  * C/C++: 'make' or compile with gcc/clang
-  * Java: 'javac Main.java'
-  * Ruby: 'ruby -c file.rb'
-  * PHP: 'php -l file.php'
-  Detect the project type from package.json, requirements.txt, go.mod, Cargo.toml, Makefile, or file extensions. If uncertain, ask the user or skip gracefully. Report any errors found and fix them automatically before final response.
 ${activePlanContext}${activeTaskContext}`;
 }
 
 module.exports = {
   tools,
-  getSystemPrompt
+  getSystemPrompt,
+  normalizeToolCall,
 };
