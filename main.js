@@ -14,7 +14,7 @@ const C = {
   italic: fg(160, 160, 160),
   code: fg(234, 234, 234),
   bullet: fg(110, 110, 110),
-  red: fg(255, 255, 255),
+  red: fg(255, 100, 100),
   you: fg(56, 189, 248),   // sky blue
   deepseek: fg(52, 211, 153),   // emerald green
 };
@@ -205,17 +205,20 @@ async function submitPrompt(page, prompt) {
   // Robust submission: use React-compatible input events
   const textarea = page.locator('textarea').first();
   await textarea.waitFor({ state: 'visible', timeout: 10000 });
-  await textarea.click();
+  await page.waitForTimeout(300);
 
-  // Select all and delete any existing content
-  await page.keyboard.press('Control+a');
-  await page.keyboard.press('Backspace');
-  await page.waitForTimeout(80);
+  // Use page.evaluate to set textarea value reliably via React fiber
+  await page.evaluate((text) => {
+    const ta = document.querySelector('textarea');
+    if (!ta) return;
+    // Set value via native setter to trigger React state update
+    const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+    nativeSetter.call(ta, text);
+    ta.dispatchEvent(new Event('input', { bubbles: true }));
+    ta.dispatchEvent(new Event('change', { bubbles: true }));
+  }, prompt);
 
-  // Focus the textarea and insert text instantly to avoid UI race conditions and input fragmentation
-  await textarea.focus();
-  await page.keyboard.insertText(prompt);
-  await page.waitForTimeout(120);
+  await page.waitForTimeout(300);
 
   // Try send button first, then Enter
   const sendSelectors = [
@@ -228,7 +231,7 @@ async function submitPrompt(page, prompt) {
   for (const sel of sendSelectors) {
     try {
       const btn = page.locator(sel).last();
-      if (await btn.isVisible({ timeout: 300 })) {
+      if (await btn.isVisible({ timeout: 500 })) {
         await btn.click();
         sent = true;
         break;
@@ -236,6 +239,7 @@ async function submitPrompt(page, prompt) {
     } catch { }
   }
   if (!sent) await page.keyboard.press('Enter');
+  await page.waitForTimeout(200);
 }
 
 // ── TUI ───────────────────────────────────────────────────────────────────────
@@ -340,12 +344,18 @@ function extractJSON(text) {
     }
   }
 
-  const braceMatch = text.match(/\{[\s\S]*\}/);
-  if (braceMatch) {
+  // Find valid JSON by searching from the last '{' backwards
+  // This handles cases where thinking text contains braces
+  let searchIdx = text.length - 1;
+  while (searchIdx >= 0) {
+    const braceIdx = text.lastIndexOf('{', searchIdx);
+    if (braceIdx < 0) break;
+    const candidate = text.substring(braceIdx);
     try {
-      const parsed = JSON.parse(braceMatch[0]);
+      const parsed = JSON.parse(candidate);
       if (parsed) return normalizeToolCall(parsed);
     } catch { }
+    searchIdx = braceIdx - 1;
   }
   return null;
 }
@@ -358,6 +368,12 @@ function normalizeToolCall(obj) {
   if (obj.tool) return obj;
   // Has a "response" key — return as-is
   if (obj.response !== undefined) return obj;
+  // Handle { "name": "...", "parameters": {...} } format
+  if (obj.name && obj.parameters && typeof obj.parameters === 'object') {
+    const result = { ...obj.parameters };
+    result.tool = obj.name;
+    return result;
+  }
   // Check if any top-level key matches a known tool name
   for (const key of Object.keys(obj)) {
     if (tools[key] && typeof obj[key] === 'object' && obj[key] !== null) {
@@ -381,42 +397,87 @@ function renderLog() {
     if (item.type === 'user') {
       const limit = (scr.width || 80) - 7;
       const wrapped = wrapText(item.text, limit);
-      itemLines.push(C.you + '○  ' + R + C.dim + wrapped[0] + R);
+      itemLines.push(C.you + '○  ' + R + C.body + wrapped[0] + R);
       for (let i = 1; i < wrapped.length; i++) {
-        itemLines.push(' '.repeat(3) + C.dim + wrapped[i] + R);
+        itemLines.push(' '.repeat(3) + C.body + wrapped[i] + R);
       }
     }
     else if (item.type === 'deepseek') {
       // Display response block
-      if (item.text === '' && item.spinning) {
+      if (item.text === '' && !item.thinking && item.spinning) {
         itemLines.push(C.deepseek + '●  ' + R + C.dim + FRAMES[spinFrame % FRAMES.length] + R);
-      } else if (item.text) {
-        const rendered = renderMd(item.text);
-        if (rendered.length > 0) {
-          itemLines.push(C.deepseek + '●  ' + R + rendered[0]);
-          for (let i = 1; i < rendered.length; i++) {
-            itemLines.push(' '.repeat(3) + rendered[i]);
+      } else if (item.thinking || item.text) {
+        const limit = Math.max(20, (chat.width || scr.width || 80) - 7);
+
+        // Render thinking text (collapsible, gray/dim with left border)
+        if (item.thinking) {
+          if (item.expanded) {
+            // Expanded: show full thinking text with green dot on first line (only if first in chain)
+            const thinkLines = wrapText(item.thinking, limit);
+            const prevDeepseek = logItems.slice(0, idx).reverse().find(prev => prev.type === 'deepseek');
+            const isFirstInChain = !prevDeepseek?.thinking;
+            for (let i = 0; i < thinkLines.length; i++) {
+              if (i === 0 && isFirstInChain) {
+                itemLines.push(C.deepseek + '●  ' + R + C.dim + thinkLines[i] + R);
+              } else {
+                itemLines.push(C.dim + '│  ' + R + C.dim + thinkLines[i] + R);
+              }
+            }
+          } else {
+            // Collapsed: show thinking with elapsed time
+            const endTime = item._thinkingEndTime || Date.now();
+            const elapsed = item._thinkingStartTime ? Math.round((endTime - item._thinkingStartTime) / 1000) : 0;
+            const timeStr = elapsed > 0 ? ` for ${elapsed}s` : '';
+            const prevDeepseek2 = logItems.slice(0, idx).reverse().find(prev => prev.type === 'deepseek');
+            const isFirstInChain = !prevDeepseek2?.thinking;
+            if (isFirstInChain) {
+              itemLines.push(C.deepseek + '●  ' + R + C.dim + 'thought' + timeStr + ' ▸' + R);
+            } else {
+              itemLines.push(C.dim + 'thought' + timeStr + ' ▸' + R);
+            }
           }
         }
-      } else if (!item.text && !item.spinning) {
+
+        // Render response through renderMd
+        if (item.text) {
+          const rendered = renderMd(item.text);
+          for (let i = 0; i < rendered.length; i++) {
+            if (!item.thinking) {
+              // No thinking — response gets the ●  prefix
+              if (i === 0) {
+                itemLines.push(C.deepseek + '●  ' + R + rendered[i]);
+              } else {
+                itemLines.push(' '.repeat(3) + rendered[i]);
+              }
+            } else {
+              // Has thinking — response aligns with │ border
+              itemLines.push(C.dim + '│  ' + R + rendered[i]);
+            }
+          }
+        }
+      } else if (!item.text && !item.thinking && !item.spinning) {
         // Empty response, nothing to show
       }
     }
     else if (item.type === 'tool') {
-      const prefix = item.status === 'executing'
-        ? C.dim + FRAMES[spinFrame % FRAMES.length] + ` executing ${item.name}...` + R
-        : C.dim + `✔ ${item.name} ` + (item.expanded ? '(click to collapse)' : '(click to show output)') + R;
-      itemLines.push(' '.repeat(3) + prefix);
-
-      if (item.expanded && item.result) {
-        const resultLines = item.result.toString().split('\n');
-        const maxLines = Math.min(50, resultLines.length);
-        for (let i = 0; i < maxLines; i++) {
-          itemLines.push(C.dim + '    ' + resultLines[i] + R);
+      if (item.status === 'executing') {
+        itemLines.push(C.dim + '│ ' + FRAMES[spinFrame % FRAMES.length] + ` executing ${item.name}...` + R);
+      } else if (item.expanded) {
+        // Expanded: show tool name with border and output
+        itemLines.push(C.dim + '│ ' + R + C.dim + item.name + ' ▾' + R);
+        if (item.result) {
+          const resultLines = item.result.toString().split('\n');
+          const maxLines = Math.min(50, resultLines.length);
+          for (let i = 0; i < maxLines; i++) {
+            itemLines.push(C.dim + '│ ' + R + C.dim + resultLines[i] + R);
+          }
+          if (resultLines.length > maxLines) {
+            itemLines.push(C.dim + '│ ' + R + C.dim + `... and ${resultLines.length - maxLines} more lines.` + R);
+          }
         }
-        if (resultLines.length > maxLines) {
-          itemLines.push(C.dim + `    ... and ${resultLines.length - maxLines} more lines.` + R);
-        }
+      } else {
+        // Collapsed: show tool name with expand arrow
+        itemLines.push(C.dim + item.name + ' ▸' + R);
       }
     }
     else if (item.type === 'separator') {
@@ -447,6 +508,9 @@ chat.on('click', (data) => {
   if (clickY >= 0 && clickY < lineToItem.length) {
     const item = lineToItem[clickY];
     if (item && item.type === 'tool' && item.status === 'completed') {
+      item.expanded = !item.expanded;
+      renderLog();
+    } else if (item && item.type === 'deepseek' && item.thinking) {
       item.expanded = !item.expanded;
       renderLog();
     }
@@ -502,9 +566,10 @@ async function ask(prompt) {
       if (!appeared) throw new Error('no response from deepseek (timeout)');
 
       const bubble = page.locator('.ds-markdown').last();
-      let printed = 0;
-      let started = false;
       let fullText = '';
+      let started = false;
+      let lastRenderedText = '';
+      let thinkingText = '';  // Track thinking/reasoning text shown before JSON response
 
       while (true) {
         await page.waitForTimeout(80);
@@ -528,28 +593,93 @@ async function ask(prompt) {
           });
         } catch { /* ignore */ }
 
-        // If the text is a complete JSON object with tool or response, stop polling
-        if (fullText && fullText.trim().startsWith('{')) {
+        // If the text contains a complete JSON object with tool or response, stop polling
+        if (fullText && fullText.length > 5) {
           const parsed = extractJSON(fullText);
           if (parsed && (parsed.response !== undefined || parsed.tool)) {
             break;
           }
         }
+
+        // Smooth streaming: progressively render text as it arrives
+        if (fullText && fullText !== lastRenderedText) {
+          lastRenderedText = fullText;
+
+          // On first non-empty text, stop the spinner and show thinking expanded
+          if (!started) {
+            started = true;
+            dsItem.spinning = false;
+            dsItem.expanded = true;  // Auto-expand thinking during streaming
+            stopGlobalSpinner();
+          }
+
+          // Try to extract response from JSON
+          const streamParsed = extractJSON(fullText);
+          if (streamParsed && streamParsed.response) {
+            // JSON response found — extract thinking text from before the JSON
+            const jsonStartIdx = fullText.indexOf('{');
+            if (jsonStartIdx > 0) {
+              thinkingText = fullText.substring(0, jsonStartIdx).trim();
+            }
+            dsItem.thinking = thinkingText || '';
+            dsItem.text = streamParsed.response;
+          } else if (streamParsed && streamParsed.tool) {
+            // Tool call still incoming — extract thinking text
+            const jsonStartIdx = fullText.indexOf('{');
+            if (jsonStartIdx > 0) {
+              thinkingText = fullText.substring(0, jsonStartIdx).trim();
+            }
+            dsItem.thinking = thinkingText || '';
+          } else {
+            // No JSON yet — only show actual thinking text, not JSON construction
+            if (!fullText.trim().startsWith('{')) {
+              thinkingText = fullText;
+              dsItem.thinking = fullText;
+              if (!dsItem._thinkingStartTime) dsItem._thinkingStartTime = Date.now();
+            }
+            // If it starts with '{', it's building JSON — keep spinner, show nothing yet
+          }
+          renderLog();
+        }
       }
 
+      // Stop spinner if not already done
       if (!started) {
+        started = true;
         dsItem.spinning = false;
         stopGlobalSpinner();
       }
 
-      // Extract JSON response and display only the response field
+      // Cancel any pending auto-collapse timer
+      if (dsItem._autoCollapseTimer) {
+        clearTimeout(dsItem._autoCollapseTimer);
+        dsItem._autoCollapseTimer = null;
+      }
+
+      // Final render after loop ends — extract JSON response and display the response field
       const parsed = extractJSON(fullText);
       if (parsed && parsed.response) {
+        // Preserve thinking text (renderLog applies red color to item.thinking)
         dsItem.text = parsed.response;
-        renderLog();
-      } else {
-        // Hide everything else – raw text, malformed JSON, or tool calls (tool output is shown separately)
+        if (thinkingText) dsItem.thinking = thinkingText;
+        if (dsItem.thinking) dsItem._thinkingEndTime = Date.now();
+      } else if (parsed && parsed.tool) {
+        // Tool call — preserve thinking text (tool output shown separately)
+        if (thinkingText) dsItem.thinking = thinkingText;
+        if (dsItem.thinking) dsItem._thinkingEndTime = Date.now();
         dsItem.text = '';
+      } else if (fullText && fullText.trim()) {
+        // Show raw text as thinking (not a recognized JSON response)
+        dsItem.thinking = fullText;
+        dsItem.text = '';
+      } else {
+        dsItem.text = '';
+      }
+      renderLog();
+
+      // Auto-collapse thinking immediately when response or tool call is ready
+      if (dsItem.thinking) {
+        dsItem.expanded = false;
         renderLog();
       }
 
@@ -562,6 +692,10 @@ async function ask(prompt) {
         //   and also handle the normalizeToolCall which already merged params
         const excludedKeys = ['tool', 'response'];
         let toolParams = parsed.parameters || {};
+        // Ensure toolParams is always a plain object (not a string or array)
+        if (typeof toolParams !== 'object' || toolParams === null || Array.isArray(toolParams)) {
+          toolParams = {};
+        }
         if (Object.keys(toolParams).length > 0) {
           // Nested format already handled
         } else {

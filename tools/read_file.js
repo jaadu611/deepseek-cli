@@ -28,13 +28,9 @@ module.exports = {
         return 'Error: Required parameter "path" is missing or empty. You must provide a non-empty string path to the file.';
       }
       const resolvedPath = path.resolve(filePath);
-      // Prevent path traversal outside current working directory for safety
       const cwd = process.cwd();
-      if (!resolvedPath.startsWith(cwd) && !resolvedPath.startsWith(path.resolve('/'))) {
-        // Allow absolute system paths only if explicitly permitted? For now restrict to cwd.
-        if (!resolvedPath.startsWith(cwd)) {
-          return `Error: Access denied - path must be within current working directory: ${cwd}`;
-        }
+      if (!resolvedPath.startsWith(cwd)) {
+        return `Error: Access denied - path must be within current working directory: ${cwd}`;
       }
       if (!fs.existsSync(resolvedPath)) {
         return `Error: File not found: ${resolvedPath}`;

@@ -36,7 +36,7 @@ module.exports = {
 
     const limit = timeout || 30000;
     return new Promise((resolve) => {
-      exec(command, { timeout: limit, shell: '/bin/bash' }, (error, stdout, stderr) => {
+      exec(command, { timeout: limit, shell: process.env.SHELL || '/bin/sh' }, (error, stdout, stderr) => {
         let result = '';
         if (stdout) result += stdout;
         if (stderr) result += `Stderr:\n${stderr}`;

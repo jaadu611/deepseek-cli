@@ -24,7 +24,7 @@ module.exports = {
       if (!pattern || typeof pattern !== 'string' || pattern.trim() === '') {
         return 'Error: Required parameter "pattern" is missing or empty. You must provide a non-empty search pattern.';
       }
-      const resolvedDir = directory ? path.resolve(directory) : '/';
+      const resolvedDir = directory ? path.resolve(directory) : process.cwd();
       let results = [];
 
       // 1. If searching entire system, use 'locate' for instantaneous indexed results
