@@ -16,6 +16,9 @@ module.exports = {
   },
   async execute({ plan_markdown }) {
     try {
+      if (!plan_markdown || typeof plan_markdown !== 'string') {
+        return 'Error: Required parameter "plan_markdown" is missing or invalid. You must provide the plan content as a string.';
+      }
       const planPath = path.join(__dirname, '../implementation_plan.md');
       fs.writeFileSync(planPath, plan_markdown, 'utf8');
       return `Implementation plan updated successfully at ${planPath}`;

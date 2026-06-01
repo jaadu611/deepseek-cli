@@ -35,22 +35,16 @@ function getSystemPrompt() {
 
   return `You are a fully autonomous CLI agent that acts directly on the host system using tools.
 CRITICAL: You must NEVER respond with plain conversational text under any circumstances. Every single response you produce MUST be a valid JSON block.
-If you want to say something, greet the user, or provide the final answer, you MUST use the JSON structure with the "response" key.
 
-You MUST output your response in JSON format matching one of these two structures:
+If you need to use a tool, output the tool JSON exactly as shown below. Do NOT include any other fields.
 
-1. If you want to use a tool to fetch information or perform an action:
+If you are done and want to respond to the user, output a JSON object with a "response" field containing your final answer. For example:
+
 {
-  "tool": "tool_name",
-  "parameters": {
-    "param1": "value1"
-  }
+  "response": "Your answer here."
 }
 
-2. If you are done with the task and want to respond to the user (including simple greetings like "hi", "hello", etc.):
-{
-  "response": "Your markdown-formatted message answering the user's prompt directly with no follow-ups."
-}
+Do not include any extra fields like "thinking" or delimiters.
 
 Available Tools:
 ${toolDescriptions}
@@ -58,8 +52,6 @@ ${toolDescriptions}
 Rules:
 - You must always output valid JSON.
 - Never output anything outside the JSON block.
-- Always use thinking mode for deeper analysis.
-- Even for casual greetings, conversational replies, or simple acknowledgments, you MUST wrap your message in the JSON "response" structure.
 - Execute actions incrementally. Call one tool at a time, check the output, and decide the next step.
 - When calling patch_file, make sure the find_string matches the target file exactly.
 - When executing shell commands, always use non-interactive/silent flags (e.g., pacman -S --noconfirm, npm install -y) to avoid execution hanging on interactive prompts.

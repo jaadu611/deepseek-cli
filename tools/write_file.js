@@ -20,6 +20,12 @@ module.exports = {
   },
   async execute({ path: filePath, content }) {
     try {
+      if (!filePath || typeof filePath !== 'string' || filePath.trim() === '') {
+        return 'Error: Required parameter "path" is missing or empty. You must provide a non-empty string path for the file.';
+      }
+      if (content === undefined || content === null || typeof content !== 'string') {
+        return 'Error: Required parameter "content" is missing or invalid. You must provide the file content as a string.';
+      }
       const resolvedPath = path.resolve(filePath);
       fs.mkdirSync(path.dirname(resolvedPath), { recursive: true });
       fs.writeFileSync(resolvedPath, content, 'utf8');

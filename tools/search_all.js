@@ -21,6 +21,9 @@ module.exports = {
   },
   async execute({ pattern, directory }) {
     try {
+      if (!pattern || typeof pattern !== 'string' || pattern.trim() === '') {
+        return 'Error: Required parameter "pattern" is missing or empty. You must provide a non-empty search pattern.';
+      }
       const resolvedDir = directory ? path.resolve(directory) : '/';
       let results = [];
 

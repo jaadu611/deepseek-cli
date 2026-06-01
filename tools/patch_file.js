@@ -24,6 +24,15 @@ module.exports = {
   },
   async execute({ path: filePath, find_string, replace_string }) {
     try {
+      if (!filePath || typeof filePath !== 'string' || filePath.trim() === '') {
+        return 'Error: Required parameter "path" is missing or empty. Please provide a valid file path.';
+      }
+      if (!find_string || typeof find_string !== 'string') {
+        return 'Error: Required parameter "find_string" is missing or invalid. Please provide the exact text to replace.';
+      }
+      if (!replace_string || typeof replace_string !== 'string') {
+        return 'Error: Required parameter "replace_string" is missing or invalid. Please provide the replacement text.';
+      }
       const resolvedPath = path.resolve(filePath);
       if (!fs.existsSync(resolvedPath)) {
         return `Error: File does not exist at ${resolvedPath}`;

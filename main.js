@@ -323,33 +323,51 @@ function stopGlobalSpinner() {
 
 function extractJSON(text) {
   if (!text) return null;
-  // Remove thinking blocks before parsing
-  let cleaned = text.replace(/```think[\s\S]*?```/g, '');
   const codeBlockRegex = /```(?:json)?\s*([\s\S]*?)\s*```/g;
   let match;
-  while ((match = codeBlockRegex.exec(cleaned)) !== null) {
+  while ((match = codeBlockRegex.exec(text)) !== null) {
     const candidate = match[1].trim();
     try {
       const parsed = JSON.parse(candidate);
-      if (parsed) return parsed;
+      if (parsed) return normalizeToolCall(parsed);
     } catch {}
     const brace = candidate.match(/\{[\s\S]*\}/);
     if (brace) {
       try {
         const parsed = JSON.parse(brace[0]);
-        if (parsed) return parsed;
+        if (parsed) return normalizeToolCall(parsed);
       } catch {}
     }
   }
 
-  const braceMatch = cleaned.match(/\{[\s\S]*\}/);
+  const braceMatch = text.match(/\{[\s\S]*\}/);
   if (braceMatch) {
     try {
       const parsed = JSON.parse(braceMatch[0]);
-      if (parsed) return parsed;
+      if (parsed) return normalizeToolCall(parsed);
     } catch {}
   }
   return null;
+}
+
+// Convert { "tool_name": { ...params } } into { tool: "tool_name", ...params }
+// while also preserving the { tool: "...", parameters: {...} } and { tool: "...", param: val } formats
+function normalizeToolCall(obj) {
+  if (!obj || typeof obj !== 'object') return obj;
+  // Already has a "tool" key — return as-is
+  if (obj.tool) return obj;
+  // Has a "response" key — return as-is
+  if (obj.response !== undefined) return obj;
+  // Check if any top-level key matches a known tool name
+  for (const key of Object.keys(obj)) {
+    if (tools[key] && typeof obj[key] === 'object' && obj[key] !== null) {
+      // Format: { "read_file": { "path": "..." } }
+      const params = obj[key];
+      params.tool = key;
+      return params;
+    }
+  }
+  return obj;
 }
 
 function renderLog() {
@@ -369,9 +387,10 @@ function renderLog() {
       }
     } 
     else if (item.type === 'deepseek') {
+      // Display response block
       if (item.text === '' && item.spinning) {
         itemLines.push(C.deepseek + '●  ' + R + C.dim + FRAMES[spinFrame % FRAMES.length] + R);
-      } else {
+      } else if (item.text) {
         const rendered = renderMd(item.text);
         if (rendered.length > 0) {
           itemLines.push(C.deepseek + '●  ' + R + rendered[0]);
@@ -379,6 +398,8 @@ function renderLog() {
             itemLines.push(' '.repeat(3) + rendered[i]);
           }
         }
+      } else if (!item.text && !item.spinning) {
+        // Empty response, nothing to show
       }
     } 
     else if (item.type === 'tool') {
@@ -438,17 +459,9 @@ let busy = false;
 async function ask(prompt) {
   busy = true;
 
-  // Auto-cleanup old plan/task files before new task
-  try {
-    const fs = require('fs');
-    const path = require('path');
-    const planPath = path.join(process.cwd(), 'implementation_plan.md');
-    const taskPath = path.join(process.cwd(), 'task.md');
-    if (fs.existsSync(planPath)) fs.unlinkSync(planPath);
-    if (fs.existsSync(taskPath)) fs.unlinkSync(taskPath);
-  } catch (cleanupErr) {
-    // Silent fail - non-critical
-  }
+  // Plan and task files are now preserved across prompts for continuity.
+  // To reset for a new unrelated task, the agent can explicitly delete them or the user can do so manually.
+  // No automatic deletion is performed.
 
   if (logItems.length > 0) {
     logItems.push({ type: 'separator' });
@@ -469,11 +482,8 @@ async function ask(prompt) {
 
     let currentPrompt = `[System Instructions]\n${getSystemPrompt()}\n\n[User Request]\n${prompt}`;
     let isInitial = true;
-    let steps = 0;
 
     while (busy) {
-      steps++;
-      if (steps > 15) throw new Error('Max agent steps (15) exceeded.');
 
       if (!isInitial) {
         dsItem.spinning = true;
@@ -493,7 +503,6 @@ async function ask(prompt) {
 
       const bubble = page.locator('.ds-markdown').last();
       let printed  = 0;
-      let stale    = 0;
       let started  = false;
       let fullText = '';
 
@@ -518,7 +527,7 @@ async function ask(prompt) {
             return findRawContent(el[key]) || el.textContent;
           });
         } catch {
-          stale++;
+          // Transient error, keep polling
         }
 
         if (fullText.length > printed) {
@@ -543,12 +552,15 @@ async function ask(prompt) {
 
           dsItem.text = displayOutput;
           renderLog();
-          stale = 0;
-        } else {
-          stale++;
         }
 
-        if (stale >= 180) break;
+        // If full text is a complete parseable JSON with action fields, stop polling immediately
+        if (fullText.trim().startsWith('{')) {
+          const parsed = extractJSON(fullText);
+          if (parsed && (parsed.response !== undefined || parsed.tool)) {
+            break;
+          }
+        }
       }
 
       if (!started) {
@@ -556,27 +568,40 @@ async function ask(prompt) {
         stopGlobalSpinner();
       }
 
-      // --- FIX: Replace raw text with clean JSON response if possible ---
+            // Extract JSON response and display only the response field
       const parsed = extractJSON(fullText);
-
-      // If we have a valid JSON with a "response" field, update the displayed text
       if (parsed && parsed.response) {
         dsItem.text = parsed.response;
         renderLog();
       } else if (!parsed && fullText.trim()) {
-        // Fallback: remove thinking blocks and display cleaned raw text
-        let cleaned = fullText.replace(/```think[\s\S]*?```/g, '').trim();
+        // Fallback: display raw text if it's not JSON
+        let cleaned = fullText.trim();
         if (cleaned && dsItem.text !== cleaned) {
           dsItem.text = cleaned;
           renderLog();
         }
       }
-      // -----------------------------------------------------------------
 
       // Now handle tool calls if present
       if (parsed && parsed.tool) {
         const toolName = parsed.tool;
-        const toolParams = parsed.parameters || {};
+        // Support all parameter passing formats:
+        //   {tool, parameters: {param1, param2}}  — nested
+        //   {tool, param1, param2}                — flat
+        //   and also handle the normalizeToolCall which already merged params
+        const excludedKeys = ['tool', 'response'];
+        let toolParams = parsed.parameters || {};
+        if (Object.keys(toolParams).length > 0) {
+          // Nested format already handled
+        } else {
+          // Flat format or normalized: take everything except meta fields
+          toolParams = {};
+          for (const key of Object.keys(parsed)) {
+            if (!excludedKeys.includes(key)) {
+              toolParams[key] = parsed[key];
+            }
+          }
+        }
 
         const toolItem = { type: 'tool', name: toolName, status: 'executing', result: '', expanded: false };
         logItems.push(toolItem);

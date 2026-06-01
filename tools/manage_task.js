@@ -16,6 +16,9 @@ module.exports = {
   },
   async execute({ task_markdown }) {
     try {
+      if (!task_markdown || typeof task_markdown !== 'string') {
+        return 'Error: Required parameter "task_markdown" is missing or invalid. You must provide the task content as a string.';
+      }
       const taskPath = path.join(__dirname, '../task.md');
       fs.writeFileSync(taskPath, task_markdown, 'utf8');
       return `Checklist updated successfully at ${taskPath}`;

@@ -9,13 +9,17 @@ module.exports = {
     properties: {
       path: {
         type: "string",
-        description: "The directory path to inspect (optional, defaults to current directory '.')."
+        description: "The directory path to inspect."
       }
-    }
+    },
+    required: ["path"]
   },
   async execute({ path: dirPath }) {
     try {
-      const resolvedPath = path.resolve(dirPath || '.');
+      if (!dirPath || typeof dirPath !== 'string' || dirPath.trim() === '') {
+        return 'Error: Required parameter "path" is missing or empty. You must provide a non-empty string path to the directory.';
+      }
+      const resolvedPath = path.resolve(dirPath);
       const items = fs.readdirSync(resolvedPath, { withFileTypes: true });
       const list = items.map(item => {
         const type = item.isDirectory() ? 'dir' : 'file';

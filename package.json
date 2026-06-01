@@ -16,9 +16,6 @@
   "type": "commonjs",
   "dependencies": {
     "blessed": "^0.1.81",
-    "express": "^5.2.1",
-    "playwright": "^1.60.0",
-    "playwright-extra": "^4.3.6",
-    "puppeteer-extra-plugin-stealth": "^2.11.2"
+    "playwright": "^1.60.0"
   }
 }
