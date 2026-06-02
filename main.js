@@ -1,11 +1,24 @@
 #!/usr/bin/env node
-const { chromium } = require('playwright');
-const { execSync } = require('child_process');
-const blessed = require('blessed');
-const { tools, getSystemPrompt } = require('./tools');
+const { chromium } = require("playwright");
+const { execSync } = require("child_process");
+const blessed = require("blessed");
+const http = require("http");
+const { tools, getSystemPrompt, normalizeToolCall } = require("./tools");
+const mcpLoader = require("./.deepseek/mcp/mcp_loader");
+const {
+  initHistory,
+  createSession,
+  getCurrentSessionId,
+  setCurrentSessionId,
+  updateSessionDeepseekId,
+  updateSessionTitle,
+  saveMessage,
+  loadSessionMessages,
+  getSessions,
+} = require("./history");
 
 // ── colors ────────────────────────────────────────────────────────────────────
-const R = '\x1b[0m';
+const R = "\x1b[0m";
 const fg = (r, g, b) => `\x1b[38;2;${r};${g};${b}m`;
 const C = {
   body: fg(200, 200, 200),
@@ -15,22 +28,22 @@ const C = {
   code: fg(234, 234, 234),
   bullet: fg(110, 110, 110),
   red: fg(255, 100, 100),
-  you: fg(56, 189, 248),   // sky blue
-  deepseek: fg(52, 211, 153),   // emerald green
+  you: fg(56, 189, 248),
+  deepseek: fg(52, 211, 153),
 };
 
 // ── wrapping utility ─────────────────────────────────────────────────────────
 function wrapText(text, limit) {
-  if (!text) return [''];
-  const words = text.split(' ');
+  if (!text) return [""];
+  const words = text.split(" ");
   const lines = [];
-  let currentLine = '';
+  let currentLine = "";
   for (const word of words) {
     if (currentLine.length + word.length > limit) {
       lines.push(currentLine.trimEnd());
-      currentLine = word + ' ';
+      currentLine = word + " ";
     } else {
-      currentLine += word + ' ';
+      currentLine += word + " ";
     }
   }
   if (currentLine) lines.push(currentLine.trimEnd());
@@ -39,131 +52,95 @@ function wrapText(text, limit) {
 
 // ── markdown renderer ─────────────────────────────────────────────────────────
 function renderMd(raw) {
-  const width = chat && chat.width ? chat.width : (scr.width || 80);
+  const width = chat && chat.width ? chat.width : scr.width || 80;
   const limit = Math.max(20, width - 7);
-  const lines = raw.trim().split('\n');
+  const lines = raw.trim().split("\n");
   const out = [];
-
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-
-    // code fence open
     const fence = line.match(/^```(\w*)/);
     if (fence) {
-      const lang = fence[1] || 'code';
+      const lang = fence[1] || "code";
       const codeLines = [];
       i++;
-      while (i < lines.length && !lines[i].startsWith('```')) {
+      while (i < lines.length && !lines[i].startsWith("```")) {
         codeLines.push(lines[i]);
         i++;
       }
-
-      // Determine box width
       let maxLen = 40;
       for (const cl of codeLines) {
         if (cl.length > maxLen) maxLen = cl.length;
       }
       const boxLimit = Math.min(limit - 4, 65);
       if (maxLen > boxLimit) maxLen = boxLimit;
-
-      const title = ' ' + lang + ' ';
-      const topBar = '┌─' + title + '─'.repeat(maxLen - title.length) + '┐';
+      const title = " " + lang + " ";
+      const topBar = "┌─" + title + "─".repeat(maxLen - title.length) + "┐";
       out.push(C.dim + topBar + R);
-
       for (const cl of codeLines) {
         let content = cl;
-        if (content.length > maxLen) {
-          content = content.substring(0, maxLen - 3) + '...';
-        }
-        const padded = content.padEnd(maxLen, ' ');
-        out.push(C.dim + '│ ' + R + C.code + padded + R + C.dim + '│' + R);
+        if (content.length > maxLen)
+          content = content.substring(0, maxLen - 3) + "...";
+        const padded = content.padEnd(maxLen, " ");
+        out.push(C.dim + "│ " + R + C.code + padded + R + C.dim + "│" + R);
       }
-
-      const bottomBar = '└─' + '─'.repeat(maxLen) + '┘';
-      out.push(C.dim + bottomBar + R);
+      out.push(C.dim + "└─" + "─".repeat(maxLen) + "┘" + R);
       continue;
     }
-
-    // heading
     const hm = line.match(/^(#{1,3}) (.*)/);
     if (hm) {
-      if (out.length && out[out.length - 1] !== '') out.push('');
+      if (out.length && out[out.length - 1] !== "") out.push("");
       const wrapped = wrapText(hm[2], limit);
-      for (const wl of wrapped) {
-        out.push(C.bold + '\x1b[1m' + inline(wl) + R);
-      }
+      for (const wl of wrapped) out.push(C.bold + "\x1b[1m" + inline(wl) + R);
       continue;
     }
-
-    // horizontal rule
     if (/^(-{3,}|\*{3,})$/.test(line.trim())) {
-      out.push(C.dim + '─'.repeat(Math.min(55, limit)) + R);
+      out.push(C.dim + "─".repeat(Math.min(55, limit)) + R);
       continue;
     }
-
-    // unordered list
     const ul = line.match(/^[ \t]*[-*+] (.*)/);
     if (ul) {
       const wrapped = wrapText(ul[1], limit - 4);
-      out.push(C.dim + ' · ' + R + C.body + inline(wrapped[0]) + R);
-      for (let j = 1; j < wrapped.length; j++) {
-        out.push('   ' + C.body + inline(wrapped[j]) + R);
-      }
+      out.push(C.dim + " · " + R + C.body + inline(wrapped[0]) + R);
+      for (let j = 1; j < wrapped.length; j++)
+        out.push("   " + C.body + inline(wrapped[j]) + R);
       continue;
     }
-
-    // ordered list
     const ol = line.match(/^[ \t]*\d+[.)]\s+(.*)/);
     if (ol) {
       const wrapped = wrapText(ol[1], limit - 4);
-      out.push(C.dim + ' · ' + R + C.body + inline(wrapped[0]) + R);
-      for (let j = 1; j < wrapped.length; j++) {
-        out.push('   ' + C.body + inline(wrapped[j]) + R);
-      }
+      out.push(C.dim + " · " + R + C.body + inline(wrapped[0]) + R);
+      for (let j = 1; j < wrapped.length; j++)
+        out.push("   " + C.body + inline(wrapped[j]) + R);
       continue;
     }
-
-    // blockquote
     const bq = line.match(/^> (.*)/);
     if (bq) {
       const wrapped = wrapText(bq[1], limit - 4);
-      for (const wl of wrapped) {
-        out.push(C.dim + ' ┃ ' + R + C.italic + '\x1b[3m' + inline(wl) + R);
-      }
+      for (const wl of wrapped)
+        out.push(C.dim + " ┃ " + R + C.italic + "\x1b[3m" + inline(wl) + R);
       continue;
     }
-
-    // blank (compress consecutive blank lines)
-    if (line.trim() === '') {
-      if (out.length && out[out.length - 1] !== '') {
-        out.push('');
-      }
+    if (line.trim() === "") {
+      if (out.length && out[out.length - 1] !== "") out.push("");
       continue;
     }
-
-    // paragraph
     const wrapped = wrapText(line, limit);
-    for (const wl of wrapped) {
-      out.push(C.body + inline(wl) + R);
-    }
+    for (const wl of wrapped) out.push(C.body + inline(wl) + R);
   }
-
-  // trim trailing blank lines
-  while (out.length && out[out.length - 1] === '') out.pop();
+  while (out.length && out[out.length - 1] === "") out.pop();
   return out;
 }
 
 function inline(s) {
   const b = C.body;
-  // order matters: bold before italic
   return s
-    .replace(/`([^`]+)`/g, C.code + '$1' + R + b)
-    .replace(/\*\*\*([^*]+)\*\*\*/g, '\x1b[1;3m' + C.bold + '$1' + R + b)
-    .replace(/\*\*([^*]+)\*\*/g, '\x1b[1m' + C.bold + '$1' + R + b)
-    .replace(/\*([^*\n]+)\*/g, '\x1b[3m' + C.italic + '$1' + R + b)
-    .replace(/~~([^~]+)~~/g, '\x1b[9m' + C.dim + '$1' + R + b)
-    .replace(/__([^_]+)__/g, '\x1b[1m' + C.bold + '$1' + R + b)
-    .replace(/_([^_\n]+)_/g, '\x1b[3m' + C.italic + '$1' + R + b);
+    .replace(/`([^`]+)`/g, C.code + "$1" + R + b)
+    .replace(/\*\*\*([^*]+)\*\*\*/g, "\x1b[1;3m" + C.bold + "$1" + R + b)
+    .replace(/\*\*([^*]+)\*\*/g, "\x1b[1m" + C.bold + "$1" + R + b)
+    .replace(/\*([^*\n]+)\*/g, "\x1b[3m" + C.italic + "$1" + R + b)
+    .replace(/~~([^~]+)~~/g, "\x1b[9m" + C.dim + "$1" + R + b)
+    .replace(/__([^_]+)__/g, "\x1b[1m" + C.bold + "$1" + R + b)
+    .replace(/(?<!\w)_([^_\n]+?)_(?!\w)/g, "\x1b[3m" + C.italic + "$1" + R + b);
 }
 
 // ── browser ───────────────────────────────────────────────────────────────────
@@ -171,56 +148,80 @@ let _page = null;
 let _initializing = null;
 
 function launchBrowser() {
-  try { execSync('pgrep -f "remote-debugging-port=9222"', { stdio: 'ignore' }); }
-  catch {
+  try {
+    execSync('pgrep -f "remote-debugging-port=9222"', { stdio: "ignore" });
+  } catch {
     execSync(
       'chromium --headless=new --remote-debugging-port=9222 --user-data-dir="$HOME/scraper-profile" &',
-      { shell: true, stdio: 'ignore' }
+      { shell: true, stdio: "ignore" },
     );
-    execSync('sleep 2');
   }
 }
 
-async function getPage() {
-  if (_page) return _page;
-  if (_initializing) return _initializing;
-
-  _initializing = (async () => {
-    const browser = await chromium.connectOverCDP('http://localhost:9222');
-    const ctx = browser.contexts()[0];
-    let page = ctx.pages().find(p => p.url().includes('chat.deepseek.com'));
-    if (!page) {
-      page = await ctx.newPage();
+async function waitForCDP(port = 9222, timeout = 10000) {
+  const start = Date.now();
+  while (Date.now() - start < timeout) {
+    try {
+      await new Promise((resolve, reject) => {
+        const req = http.get(`http://localhost:${port}/json/version`, (res) => {
+          if (res.statusCode === 200) resolve();
+          else reject(new Error("Status " + res.statusCode));
+        });
+        req.on("error", reject);
+        req.setTimeout(1000, () => {
+          req.destroy();
+          reject(new Error("Timeout"));
+        });
+      });
+      return true;
+    } catch {
+      await new Promise((r) => setTimeout(r, 300));
     }
-    await page.goto('https://chat.deepseek.com/');
+  }
+  throw new Error("Chromium CDP port did not open in time");
+}
+
+async function getPage() {
+  if (_page) {
+    try {
+      await _page.evaluate("1");
+      return _page;
+    } catch {
+      _page = null;
+      _initializing = null;
+    }
+  }
+  if (_initializing) return _initializing;
+  _initializing = (async () => {
+    await waitForCDP();
+    const browser = await chromium.connectOverCDP("http://localhost:9222");
+    const ctx = browser.contexts()[0];
+    let page = ctx.pages().find((p) => p.url().includes("chat.deepseek.com"));
+    if (!page) page = await ctx.newPage();
+    await page.goto("https://chat.deepseek.com/");
     _page = page;
     _initializing = null;
     return page;
   })();
-
   return _initializing;
 }
 
 async function submitPrompt(page, prompt) {
-  // Robust submission: use React-compatible input events
-  const textarea = page.locator('textarea').first();
-  await textarea.waitFor({ state: 'visible', timeout: 10000 });
+  const textarea = page.locator("textarea").first();
+  await textarea.waitFor({ state: "visible", timeout: 10000 });
   await page.waitForTimeout(300);
-
-  // Use page.evaluate to set textarea value reliably via React fiber
   await page.evaluate((text) => {
-    const ta = document.querySelector('textarea');
+    const ta = document.querySelector("textarea");
     if (!ta) return;
-    // Set value via native setter to trigger React state update
-    const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+    const nativeSetter = Object.getOwnPropertyDescriptor(
+      window.HTMLTextAreaElement.prototype,
+      "value",
+    ).set;
     nativeSetter.call(ta, text);
-    ta.dispatchEvent(new Event('input', { bubbles: true }));
-    ta.dispatchEvent(new Event('change', { bubbles: true }));
+    ta.dispatchEvent(new Event("input", { bubbles: true }));
+    ta.dispatchEvent(new Event("change", { bubbles: true }));
   }, prompt);
-
   await page.waitForTimeout(300);
-
-  // Try send button first, then Enter
   const sendSelectors = [
     'button[aria-label="Send Message"]',
     'button[aria-label="Send"]',
@@ -238,7 +239,7 @@ async function submitPrompt(page, prompt) {
       }
     } catch { }
   }
-  if (!sent) await page.keyboard.press('Enter');
+  if (!sent) await page.keyboard.press("Enter");
   await page.waitForTimeout(200);
 }
 
@@ -246,63 +247,56 @@ async function submitPrompt(page, prompt) {
 const scr = blessed.screen({
   smartCSR: true,
   fullUnicode: true,
-  title: 'deepseek',
-  // Don't let grabKeys block our scroll bindings
-  ignoreLocked: ['C-c'],
+  title: "deepseek",
+  ignoreLocked: ["C-c"],
 });
-
-// Chat history — scrollable box
 const chat = blessed.box({
-  top: 0, left: 0, right: 0, bottom: 3,
+  top: 0,
+  left: 0,
+  right: 0,
+  bottom: 3,
   scrollable: true,
   alwaysScroll: true,
   mouse: true,
   keys: false,
-  tags: false,   // raw ANSI passthrough
+  tags: false,
   wrap: false,
-  scrollbar: {
-    ch: ' ',
-    style: { bg: '#3e4452' },
-    track: { bg: 'default' },
-  },
+  scrollbar: { ch: " ", style: { bg: "#3e4452" }, track: { bg: "default" } },
   padding: { left: 2, right: 2, top: 0 },
-  style: { bg: 'default', fg: '#c8c8c8' },
+  style: { bg: "default", fg: "#c8c8c8" },
 });
-
-// Input bar
 const input = blessed.textbox({
-  bottom: 0, left: 0, right: 0, height: 3,
+  bottom: 0,
+  left: 0,
+  right: 0,
+  height: 3,
   inputOnFocus: true,
   padding: { left: 3, right: 2 },
   style: {
-    bg: 'default',
-    fg: '#c8c8c8',
-    border: { fg: '#3e4452' },
-    focus: { border: { fg: '#ffffff' } },
+    bg: "default",
+    fg: "#c8c8c8",
+    border: { fg: "#3e4452" },
+    focus: { border: { fg: "#ffffff" } },
   },
-  border: { type: 'line' },
+  border: { type: "line" },
 });
-
 scr.append(chat);
 scr.append(input);
 
-// ── helpers ───────────────────────────────────────────────────────────────────
 function scrollDown(n) {
   chat.scroll(n || chat.height);
   scr.render();
 }
-
 function scrollUp(n) {
   chat.scroll(-(n || chat.height));
   scr.render();
 }
 
 // ── spinner ───────────────────────────────────────────────────────────────────
-const FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+const FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 let spinFrame = 0;
 let activeSpinners = 0;
 let globalSpinInterval = null;
-
 const logItems = [];
 let lineToItem = [];
 
@@ -315,7 +309,6 @@ function startGlobalSpinner() {
     renderLog();
   }, 80);
 }
-
 function stopGlobalSpinner() {
   activeSpinners = Math.max(0, activeSpinners - 1);
   if (activeSpinners === 0 && globalSpinInterval) {
@@ -343,12 +336,9 @@ function extractJSON(text) {
       } catch { }
     }
   }
-
-  // Find valid JSON by searching from the last '{' backwards
-  // This handles cases where thinking text contains braces
   let searchIdx = text.length - 1;
   while (searchIdx >= 0) {
-    const braceIdx = text.lastIndexOf('{', searchIdx);
+    const braceIdx = text.lastIndexOf("{", searchIdx);
     if (braceIdx < 0) break;
     const candidate = text.substring(braceIdx);
     try {
@@ -360,522 +350,622 @@ function extractJSON(text) {
   return null;
 }
 
-// Convert a parsed JSON object into a normalized tool call structure.
-//
-// Supported shapes (in priority order):
-//   1. { "tool": "<name>", ...params }                       — single tool (flat)
-//   2. { "name": "<name>", "parameters": { ... } }           — single tool (nested)
-//   3. { "<tool_name>": { ...params } }                      — single tool (key-as-name)
-//   4. { "response": "..." }                                 — final response (no tool)
-//   5. { "tools": [ { "name": "<n>", ...params }, ... ] }    — MULTI-tool (parallel)
-//      Each element may also use the { "<tool_name>": { ... } } shape.
-//
-// For single-tool shapes (1-3) the returned object mirrors the input but
-// guarantees a top-level "tool" key. For the multi-tool shape (5) the function
-// returns a sentinel object: { _isMulti: true, calls: [ {tool, ...params}, ... ] }.
-function normalizeToolCall(obj) {
-  if (!obj || typeof obj !== 'object') return obj;
-  // Already has a "tool" key — return as-is (single tool, flat format)
-  if (obj.tool) return obj;
-  // Has a "response" key — return as-is (final answer to the user)
-  if (obj.response !== undefined) return obj;
-
-  // Multi-tool format: { "tools": [ ... ] }
-  if (Array.isArray(obj.tools)) {
-    const calls = obj.tools
-      .filter(t => t && typeof t === 'object')
-      .map(t => {
-        // Element shape: { "name": "<n>", ...params }
-        if (t.name) {
-          const { name, ...rest } = t;
-          return { tool: name, ...rest };
-        }
-        // Element shape: { "<tool_name>": { ...params } }
-        for (const key of Object.keys(t)) {
-          if (tools[key] && typeof t[key] === 'object' && t[key] !== null) {
-            return { tool: key, ...t[key] };
-          }
-        }
-        return null;
-      })
-      .filter(Boolean);
-
-    if (calls.length > 0) {
-      return { _isMulti: true, calls };
-    }
-  }
-
-  // Single-tool shape: { "name": "<n>", "parameters": { ... } }
-  if (obj.name && obj.parameters && typeof obj.parameters === 'object') {
-    const result = { ...obj.parameters };
-    result.tool = obj.name;
-    return result;
-  }
-  // Single-tool shape: { "<tool_name>": { ...params } }
-  for (const key of Object.keys(obj)) {
-    if (tools[key] && typeof obj[key] === 'object' && obj[key] !== null) {
-      const params = obj[key];
-      params.tool = key;
-      return params;
-    }
-  }
-  return obj;
+const MAX_TOOL_OUTPUT = 4000;
+function safeTruncate(text) {
+  if (!text) return "";
+  const str = String(text);
+  if (str.length <= MAX_TOOL_OUTPUT) return str;
+  return (
+    str.slice(0, MAX_TOOL_OUTPUT) +
+    `\n\n[Output truncated: ${str.length - MAX_TOOL_OUTPUT} chars omitted]`
+  );
 }
 
 function renderLog() {
   const lines = [];
   lineToItem = [];
-
   for (let idx = 0; idx < logItems.length; idx++) {
     const item = logItems[idx];
     const itemLines = [];
-
-    if (item.type === 'user') {
+    if (item.type === "user") {
       const limit = (scr.width || 80) - 7;
       const wrapped = wrapText(item.text, limit);
-      itemLines.push(C.you + '○  ' + R + C.body + wrapped[0] + R);
-      for (let i = 1; i < wrapped.length; i++) {
-        itemLines.push(' '.repeat(3) + C.body + wrapped[i] + R);
-      }
-    }
-    else if (item.type === 'deepseek') {
-      // Display response block
-      if (item.text === '' && !item.thinking && item.spinning) {
-        itemLines.push(C.deepseek + '●  ' + R + C.dim + FRAMES[spinFrame % FRAMES.length] + R);
+      itemLines.push(C.you + "○  " + R + C.body + wrapped[0] + R);
+      for (let i = 1; i < wrapped.length; i++)
+        itemLines.push(" ".repeat(3) + C.body + wrapped[i] + R);
+    } else if (item.type === "deepseek") {
+      if (item.text === "" && !item.thinking && item.spinning) {
+        itemLines.push(
+          C.deepseek +
+          "●  " +
+          R +
+          C.dim +
+          FRAMES[spinFrame % FRAMES.length] +
+          R,
+        );
       } else if (item.thinking || item.text) {
         const limit = Math.max(20, (chat.width || scr.width || 80) - 7);
-
-        // Render thinking text (collapsible, gray/dim with left border)
         if (item.thinking) {
           if (item.expanded) {
-            // Expanded: show full thinking text with green dot on first line (only if first in chain)
             const thinkLines = wrapText(item.thinking, limit);
-            const prevDeepseek = logItems.slice(0, idx).reverse().find(prev => prev.type === 'deepseek');
+            const prevDeepseek = logItems
+              .slice(0, idx)
+              .reverse()
+              .find((prev) => prev.type === "deepseek");
             const isFirstInChain = !prevDeepseek?.thinking;
             for (let i = 0; i < thinkLines.length; i++) {
-              if (i === 0 && isFirstInChain) {
-                itemLines.push(C.deepseek + '●  ' + R + C.dim + thinkLines[i] + R);
-              } else {
-                itemLines.push(C.dim + '│  ' + R + C.dim + thinkLines[i] + R);
-              }
+              if (i === 0 && isFirstInChain)
+                itemLines.push(
+                  C.deepseek + "●  " + R + C.dim + thinkLines[i] + R,
+                );
+              else
+                itemLines.push(C.dim + "│  " + R + C.dim + thinkLines[i] + R);
             }
           } else {
-            // Collapsed: show thinking with elapsed time
             const endTime = item._thinkingEndTime || Date.now();
-            const elapsed = item._thinkingStartTime ? Math.round((endTime - item._thinkingStartTime) / 1000) : 0;
-            const timeStr = elapsed > 0 ? ` for ${elapsed}s` : '';
-            const prevDeepseek2 = logItems.slice(0, idx).reverse().find(prev => prev.type === 'deepseek');
+            const elapsed = item._thinkingStartTime
+              ? Math.round((endTime - item._thinkingStartTime) / 1000)
+              : 0;
+            const timeStr = elapsed > 0 ? ` for ${elapsed}s` : "";
+            const prevDeepseek2 = logItems
+              .slice(0, idx)
+              .reverse()
+              .find((prev) => prev.type === "deepseek");
             const isFirstInChain = !prevDeepseek2?.thinking;
-            if (isFirstInChain) {
-              itemLines.push(C.deepseek + '●  ' + R + C.dim + 'thought' + timeStr + ' ▸' + R);
-            } else {
-              itemLines.push(C.dim + 'thought' + timeStr + ' ▸' + R);
-            }
+            if (isFirstInChain)
+              itemLines.push(
+                C.deepseek + "●  " + R + C.dim + "thought" + timeStr + " ▸" + R,
+              );
+            else itemLines.push(C.dim + "thought" + timeStr + " ▸" + R);
           }
         }
-
-        // Render response through renderMd
         if (item.text) {
           const rendered = renderMd(item.text);
           for (let i = 0; i < rendered.length; i++) {
             if (!item.thinking) {
-              // No thinking — response gets the ●  prefix
-              if (i === 0) {
-                itemLines.push(C.deepseek + '●  ' + R + rendered[i]);
-              } else {
-                itemLines.push(' '.repeat(3) + rendered[i]);
-              }
+              if (i === 0) itemLines.push(C.deepseek + "●  " + R + rendered[i]);
+              else itemLines.push(" ".repeat(3) + rendered[i]);
             } else {
-              // Has thinking — response aligns with │ border
-              itemLines.push(C.dim + '│  ' + R + rendered[i]);
+              itemLines.push(C.dim + "│  " + R + rendered[i]);
             }
           }
         }
-      } else if (!item.text && !item.thinking && !item.spinning) {
-        // Empty response, nothing to show
       }
-    }
-    else if (item.type === 'tool') {
-      if (item.status === 'executing') {
-        itemLines.push(C.dim + '│ ' + FRAMES[spinFrame % FRAMES.length] + ` executing ${item.name}...` + R);
-      } else if (item.expanded) {
-        // Expanded: show tool name with border and output
-        itemLines.push(C.dim + '│ ' + R + C.dim + item.name + ' ▾' + R);
+    } else if (item.type === "tool") {
+      if (item.status === "executing")
+        itemLines.push(
+          C.dim +
+          "│ " +
+          FRAMES[spinFrame % FRAMES.length] +
+          ` executing ${item.name}...` +
+          R,
+        );
+      else if (item.expanded) {
+        itemLines.push(C.dim + "│ " + R + C.dim + item.name + " ▾" + R);
         if (item.result) {
-          const resultLines = item.result.toString().split('\n');
+          const resultLines = item.result.toString().split("\n");
           const maxLines = Math.min(50, resultLines.length);
-          for (let i = 0; i < maxLines; i++) {
-            itemLines.push(C.dim + '│ ' + R + C.dim + resultLines[i] + R);
-          }
-          if (resultLines.length > maxLines) {
-            itemLines.push(C.dim + '│ ' + R + C.dim + `... and ${resultLines.length - maxLines} more lines.` + R);
-          }
+          for (let i = 0; i < maxLines; i++)
+            itemLines.push(C.dim + "│ " + R + C.dim + resultLines[i] + R);
+          if (resultLines.length > maxLines)
+            itemLines.push(
+              C.dim +
+              "│ " +
+              R +
+              C.dim +
+              `... and ${resultLines.length - maxLines} more lines.` +
+              R,
+            );
         }
       } else {
-        // Collapsed: show tool name with expand arrow
-        itemLines.push(C.dim + item.name + ' ▸' + R);
+        itemLines.push(C.dim + item.name + " ▸" + R);
       }
+    } else if (item.type === "separator") {
+      itemLines.push("");
+    } else if (item.type === "divider") {
+      const width = chat.width ? chat.width - 4 : (scr.width || 80) - 4;
+      itemLines.push(C.dim + "─".repeat(Math.max(10, width)) + R);
+    } else if (item.type === "error") {
+      itemLines.push(C.red + "error  " + R + C.dim + item.message + R);
     }
-    else if (item.type === 'separator') {
-      itemLines.push('');
-    }
-    else if (item.type === 'divider') {
-      const width = chat.width ? (chat.width - 4) : ((scr.width || 80) - 4);
-      itemLines.push(C.dim + '─'.repeat(Math.max(10, width)) + R);
-    }
-    else if (item.type === 'error') {
-      itemLines.push(C.red + 'error  ' + R + C.dim + item.message + R);
-    }
-
     for (const l of itemLines) {
       lines.push(l);
       lineToItem.push(item);
     }
   }
-
-  chat.setContent(lines.join('\n'));
+  chat.setContent(lines.join("\n"));
   chat.setScrollPerc(100);
   scr.render();
 }
 
-// ── interactive clicks ────────────────────────────────────────────────────────
-chat.on('click', (data) => {
+chat.on("click", (data) => {
   const clickY = data.y - (chat.atop + chat.itop) + chat.childBase;
   if (clickY >= 0 && clickY < lineToItem.length) {
     const item = lineToItem[clickY];
-    if (item && item.type === 'tool' && item.status === 'completed') {
+    if (item && item.type === "tool" && item.status === "completed") {
       item.expanded = !item.expanded;
       renderLog();
-    } else if (item && item.type === 'deepseek' && item.thinking) {
+    } else if (item && item.type === "deepseek" && item.thinking) {
       item.expanded = !item.expanded;
       renderLog();
     }
   }
 });
 
-// ── ask ───────────────────────────────────────────────────────────────────────
-let busy = false;
+// ── chat history overlay ──────────────────────────────────────────────────────
+function showChatHistory() {
+  const sessions = getSessions();
+  if (sessions.length === 0) return;
 
-async function ask(prompt) {
-  busy = true;
+  const overlay = blessed.box({
+    top: "center",
+    left: "center",
+    width: "80%",
+    height: "80%",
+    border: { type: "line" },
+    style: { border: { fg: "white" }, bg: "black" },
+    label: " Chat History (Enter to select, Esc to cancel) ",
+    keys: true,
+    vi: true,
+    alwaysScroll: true,
+    scrollable: true,
+  });
 
-  // Plan and task files are now preserved across prompts for continuity.
-  // To reset for a new unrelated task, the agent can explicitly delete them or the user can do so manually.
-  // No automatic deletion is performed.
+  const list = blessed.list({
+    parent: overlay,
+    top: 1,
+    left: 1,
+    right: 1,
+    bottom: 1,
+    keys: true,
+    vi: true,
+    mouse: true,
+    style: { selected: { bg: "blue", fg: "white" }, item: { fg: "white" } },
+    items: sessions.map((s) => {
+      const date = new Date(s.updated_at).toLocaleDateString();
+      return `${s.title} (${date})`;
+    }),
+  });
 
-  if (logItems.length > 0) {
-    logItems.push({ type: 'separator' });
-    logItems.push({ type: 'divider' });
-    logItems.push({ type: 'separator' });
+  scr.append(overlay);
+  list.focus();
+  scr.render();
+
+  function closeOverlay() {
+    overlay.destroy();
+    input.focus();
+    scr.render();
   }
 
-  logItems.push({ type: 'user', text: prompt });
+  list.on("select", function (item, index) {
+    const selectedSession = sessions[index];
+    closeOverlay();
+    loadSessionIntoTUI(selectedSession);
+  });
 
-  let dsItem = { type: 'deepseek', text: '', spinning: true };
+  list.key(["escape"], closeOverlay);
+}
+
+async function loadSessionIntoTUI(session) {
+  setCurrentSessionId(session.id);
+  logItems.length = 0;
+
+  const messages = loadSessionMessages(session.id);
+  for (const msg of messages) {
+    if (msg.role === "user") {
+      if (logItems.length > 0) {
+        logItems.push({ type: "separator" });
+        logItems.push({ type: "divider" });
+        logItems.push({ type: "separator" });
+      }
+      logItems.push({ type: "user", text: msg.content });
+    } else if (msg.role === "assistant") {
+      logItems.push({
+        type: "deepseek",
+        text: msg.content,
+        thinking: msg.thinking || "",
+        expanded: false,
+        spinning: false,
+      });
+    } else if (msg.role === "tool_call") {
+      logItems.push({
+        type: "tool",
+        name: msg.content,
+        status: "completed",
+        result: "",
+        expanded: false,
+      });
+    } else if (msg.role === "tool_result") {
+      const lastTool = logItems
+        .slice()
+        .reverse()
+        .find((i) => i.type === "tool" && i.name === msg.tool);
+      if (lastTool) lastTool.result = msg.content;
+    }
+  }
+  renderLog();
+
+  if (session.deepseek_id) {
+    try {
+      const page = await getPage();
+      if (!page.url().includes(session.deepseek_id)) {
+        await page.goto(
+          `https://chat.deepseek.com/a/chat/s/${session.deepseek_id}`,
+        );
+        await page.waitForTimeout(1000);
+      }
+    } catch (e) { }
+  }
+}
+
+// ── ask ───────────────────────────────────────────────────────────────────────
+let busy = false;
+async function ask(prompt) {
+  busy = true;
+  const sid = getCurrentSessionId();
+
+  if (logItems.length > 0) {
+    logItems.push({ type: "separator" });
+    logItems.push({ type: "divider" });
+    logItems.push({ type: "separator" });
+  }
+  logItems.push({ type: "user", text: prompt });
+  saveMessage(sid, "user", prompt);
+
+  let dsItem = { type: "deepseek", text: "", spinning: true };
   logItems.push(dsItem);
-
   startGlobalSpinner();
 
   try {
     const page = await getPage();
-    const count = async () => page.locator('.ds-markdown').count();
-
+    const count = async () => page.locator(".ds-markdown").count();
     let currentPrompt = `[System Instructions]\n${getSystemPrompt()}\n\n[User Request]\n${prompt}`;
     let isInitial = true;
 
     while (busy) {
-
       if (!isInitial) {
         dsItem.spinning = true;
         startGlobalSpinner();
       }
-
       await submitPrompt(page, currentPrompt);
-
       const before = await count();
       let appeared = false;
       for (let i = 0; i < 150; i++) {
         await page.waitForTimeout(100);
-        if (await count() > before) { appeared = true; break; }
+        if ((await count()) > before) {
+          appeared = true;
+          break;
+        }
+      }
+      if (!appeared) {
+        try {
+          await page.reload({ waitUntil: 'domcontentloaded' });
+          await page.waitForTimeout(2000);
+          await submitPrompt(page, currentPrompt);
+          let retryAppeared = false;
+          for (let i = 0; i < 150; i++) {
+            await page.waitForTimeout(100);
+            if (await count() > before) { retryAppeared = true; break; }
+          }
+          if (!retryAppeared) throw new Error('DeepSeek failed to respond after retry. Session may be rate-limited.');
+        } catch (retryErr) {
+          throw new Error(`Generation dropped and recovery failed: ${retryErr.message}`);
+        }
       }
 
-      if (!appeared) throw new Error('no response from deepseek (timeout)');
-
-      const bubble = page.locator('.ds-markdown').last();
-      let fullText = '';
+      const bubble = page.locator(".ds-markdown").last();
+      let fullText = "";
       let started = false;
-      let lastRenderedText = '';
-      let thinkingText = '';  // Track thinking/reasoning text shown before JSON response
+      let lastRenderedText = "";
+      let thinkingText = "";
 
       while (true) {
         await page.waitForTimeout(80);
         try {
           fullText = await bubble.evaluate((el) => {
-            const key = Object.keys(el).find(k => k.startsWith('__reactFiber') || k.startsWith('__reactInternal'));
+            const key = Object.keys(el).find(
+              (k) =>
+                k.startsWith("__reactFiber") || k.startsWith("__reactInternal"),
+            );
             if (!key) return el.textContent;
-
             function findRawContent(node, depth = 0) {
               if (!node || depth > 20) return null;
               const props = node.memoizedProps;
               if (props) {
-                if (typeof props.content === 'string') return props.content;
-                if (typeof props.text === 'string') return props.text;
-                if (typeof props.value === 'string') return props.value;
+                if (typeof props.content === "string") return props.content;
+                if (typeof props.text === "string") return props.text;
+                if (typeof props.value === "string") return props.value;
               }
               return findRawContent(node.return, depth + 1);
             }
-
             return findRawContent(el[key]) || el.textContent;
           });
-        } catch { /* ignore */ }
+        } catch { }
 
-        // If the text contains a complete JSON object with tool, response, or a
-        // parallel "tools" array, stop polling. This is the main streaming
-        // exit condition and now covers the new multi-tool shape.
         if (fullText && fullText.length > 5) {
           const parsed = extractJSON(fullText);
-          if (parsed && (parsed.response !== undefined || parsed.tool || parsed._isMulti)) {
+          if (
+            parsed &&
+            (parsed.response !== undefined || parsed.tool || parsed._isMulti)
+          )
             break;
-          }
         }
 
-        // Smooth streaming: progressively render text as it arrives
         if (fullText && fullText !== lastRenderedText) {
           lastRenderedText = fullText;
-
-          // On first non-empty text, stop the spinner and show thinking expanded
           if (!started) {
             started = true;
             dsItem.spinning = false;
-            dsItem.expanded = true;  // Auto-expand thinking during streaming
+            dsItem.expanded = true;
             stopGlobalSpinner();
           }
-
-          // Try to extract response from JSON
           const streamParsed = extractJSON(fullText);
           if (streamParsed && streamParsed.response) {
-            // JSON response found — extract thinking text from before the JSON
-            const jsonStartIdx = fullText.indexOf('{');
-            if (jsonStartIdx > 0) {
+            const jsonStartIdx = fullText.indexOf("{");
+            if (jsonStartIdx > 0)
               thinkingText = fullText.substring(0, jsonStartIdx).trim();
-            }
-            dsItem.thinking = thinkingText || '';
+            dsItem.thinking = thinkingText || "";
             dsItem.text = streamParsed.response;
-          } else if (streamParsed && (streamParsed.tool || streamParsed._isMulti)) {
-            // Tool call (single or parallel batch) still incoming — capture
-            // any thinking text that appeared before the JSON object.
-            const jsonStartIdx = fullText.indexOf('{');
-            if (jsonStartIdx > 0) {
+          } else if (
+            streamParsed &&
+            (streamParsed.tool || streamParsed._isMulti)
+          ) {
+            const jsonStartIdx = fullText.indexOf("{");
+            if (jsonStartIdx > 0)
               thinkingText = fullText.substring(0, jsonStartIdx).trim();
-            }
-            dsItem.thinking = thinkingText || '';
+            dsItem.thinking = thinkingText || "";
           } else {
-            // No JSON yet — only show actual thinking text, not JSON construction
-            if (!fullText.trim().startsWith('{')) {
+            if (!fullText.trim().startsWith("{")) {
               thinkingText = fullText;
               dsItem.thinking = fullText;
-              if (!dsItem._thinkingStartTime) dsItem._thinkingStartTime = Date.now();
+              if (!dsItem._thinkingStartTime)
+                dsItem._thinkingStartTime = Date.now();
             }
-            // If it starts with '{', it's building JSON — keep spinner, show nothing yet
           }
           renderLog();
         }
       }
 
-      // Stop spinner if not already done
       if (!started) {
         started = true;
         dsItem.spinning = false;
         stopGlobalSpinner();
       }
-
-      // Cancel any pending auto-collapse timer
       if (dsItem._autoCollapseTimer) {
         clearTimeout(dsItem._autoCollapseTimer);
         dsItem._autoCollapseTimer = null;
       }
 
-      // Final render after loop ends — extract JSON response and display the
-      // response field. Three terminator shapes are recognised: a final
-      // "response" string, a single "tool" call, or a parallel "tools" array.
       const parsed = extractJSON(fullText);
       if (parsed && parsed.response) {
-        // Preserve thinking text (renderLog applies red color to item.thinking)
         dsItem.text = parsed.response;
         if (thinkingText) dsItem.thinking = thinkingText;
         if (dsItem.thinking) dsItem._thinkingEndTime = Date.now();
+        saveMessage(sid, "assistant", parsed.response, {
+          thinking: thinkingText,
+        });
       } else if (parsed && (parsed.tool || parsed._isMulti)) {
-        // Tool call (single or parallel batch) — preserve thinking text
-        // (tool outputs are rendered as their own log items below).
         if (thinkingText) dsItem.thinking = thinkingText;
         if (dsItem.thinking) dsItem._thinkingEndTime = Date.now();
-        dsItem.text = '';
+        dsItem.text = "";
       } else if (fullText && fullText.trim()) {
-        // Show raw text as thinking (not a recognized JSON response)
         dsItem.thinking = fullText;
-        dsItem.text = '';
+        dsItem.text = "";
       } else {
-        dsItem.text = '';
+        dsItem.text = "";
       }
-      renderLog();
 
-      // Auto-collapse thinking immediately when response or tool call is ready
+      renderLog();
       if (dsItem.thinking) {
         dsItem.expanded = false;
         renderLog();
       }
 
-      // Now handle tool calls if present.
-      // Two flavors are supported:
-      //   - Single tool call:  parsed.tool === "<name>"
-      //   - Parallel batch:    parsed._isMulti === true  with parsed.calls: [{tool, ...}, ...]
+      // Sync Deepseek Chat ID & Title
+      const sess = getSessions().find((s) => s.id === sid);
+      if (sess) {
+        if (!sess.deepseek_id) {
+          const url = page.url();
+          const match = url.match(/\/a\/chat\/s\/([a-zA-Z0-9_-]+)/);
+          if (match) updateSessionDeepseekId(sid, match[1]);
+        }
+        if (sess.title === "New Chat")
+          updateSessionTitle(sid, prompt.slice(0, 40));
+      }
+
       if (parsed && parsed._isMulti) {
         const calls = parsed.calls;
-
-        // Cap the number of parallel calls for safety / legibility.
         const MAX_PARALLEL = 8;
         const batchedCalls = calls.slice(0, MAX_PARALLEL);
-
-        // Build a log item for every call so each one is visible independently.
-        const toolItems = batchedCalls.map(c => ({
-          type: 'tool',
+        const toolItems = batchedCalls.map((c) => ({
+          type: "tool",
           name: c.tool,
-          status: 'executing',
-          result: '',
+          status: "executing",
+          result: "",
           expanded: false,
         }));
         for (const t of toolItems) logItems.push(t);
+        for (const c of batchedCalls)
+          saveMessage(sid, "tool_call", c.tool, { params: c });
+
         startGlobalSpinner();
         renderLog();
-
-        // Execute all calls concurrently. Errors in one call must not abort the
-        // others, so wrap each in its own try/catch and resolve to a string.
         const results = await Promise.all(batchedCalls.map(async (c) => {
           const tool = tools[c.tool];
-          if (!tool) {
-            return `Error: Tool '${c.tool}' not found.`;
-          }
-          try {
-            const out = await tool.execute(c);
-            return out === undefined || out === null ? '' : String(out);
-          } catch (err) {
-            return `Error executing tool: ${err.message}`;
+          if (tool) {
+            try { const out = await tool.execute(c); return safeTruncate(out === undefined || out === null ? '' : String(out)); }
+            catch (err) { return safeTruncate(`Error executing tool: ${err.message}`); }
+          } else {
+            const mcp = require('./.deepseek/mcp/mcp_loader');
+            const isMcp = mcp.getRegistry().some(t => t.name === c.tool);
+            if (isMcp) {
+              try { const out = await mcp.callTool(c.tool, c); return safeTruncate(String(out)); }
+              catch (err) { return safeTruncate(`Error executing MCP tool: ${err.message}`); }
+            }
+            return safeTruncate(`Error: Tool '${c.tool}' not found.`);
           }
         }));
 
-        // Attach results to their log items.
         results.forEach((res, i) => {
-          toolItems[i].status = 'completed';
+          toolItems[i].status = "completed";
           toolItems[i].result = res;
+          saveMessage(sid, "tool_result", res, { tool: batchedCalls[i].tool });
         });
         stopGlobalSpinner();
         renderLog();
 
-        // Combine all outputs into one follow-up message so the model sees
-        // them together and can decide the next step in a single round trip.
         const combined = results
           .map((res, i) => `[Tool Output for ${batchedCalls[i].tool}]\n${res}`)
-          .join('\n\n');
-        const overflowNote = calls.length > MAX_PARALLEL
-          ? `\n\nNote: ${calls.length - MAX_PARALLEL} additional call(s) were truncated. Issue them in the next turn if still needed.`
-          : '';
+          .join("\n\n");
+        const overflowNote =
+          calls.length > MAX_PARALLEL
+            ? `\n\nNote: ${calls.length - MAX_PARALLEL} additional call(s) were truncated. Issue them in the next turn if still needed.`
+            : "";
         currentPrompt = `${combined}${overflowNote}\n\nRemember to return your next response in valid JSON. You may issue a single tool call, a parallel "tools" array of independent calls, or a final "response" object.`;
         isInitial = false;
-
-        dsItem = { type: 'deepseek', text: '', spinning: true };
+        dsItem = { type: "deepseek", text: "", spinning: true };
         logItems.push(dsItem);
       } else if (parsed && parsed.tool) {
         const toolName = parsed.tool;
-        // Support all parameter passing formats:
-        //   {tool, parameters: {param1, param2}}  — nested
-        //   {tool, param1, param2}                — flat
-        //   and also handle the normalizeToolCall which already merged params
-        const excludedKeys = ['tool', 'response'];
+        const excludedKeys = ["tool", "response"];
         let toolParams = parsed.parameters || {};
-        // Ensure toolParams is always a plain object (not a string or array)
-        if (typeof toolParams !== 'object' || toolParams === null || Array.isArray(toolParams)) {
+        if (
+          typeof toolParams !== "object" ||
+          toolParams === null ||
+          Array.isArray(toolParams)
+        )
           toolParams = {};
-        }
         if (Object.keys(toolParams).length > 0) {
-          // Nested format already handled
         } else {
-          // Flat format or normalized: take everything except meta fields
           toolParams = {};
           for (const key of Object.keys(parsed)) {
-            if (!excludedKeys.includes(key)) {
-              toolParams[key] = parsed[key];
-            }
+            if (!excludedKeys.includes(key)) toolParams[key] = parsed[key];
           }
         }
 
-        const toolItem = { type: 'tool', name: toolName, status: 'executing', result: '', expanded: false };
+        const toolItem = {
+          type: "tool",
+          name: toolName,
+          status: "executing",
+          result: "",
+          expanded: false,
+        };
         logItems.push(toolItem);
-        startGlobalSpinner();
+        saveMessage(sid, "tool_call", toolName, { params: toolParams });
 
+        startGlobalSpinner();
         const tool = tools[toolName];
         let toolResult = '';
         if (tool) {
-          try {
-            toolResult = await tool.execute(toolParams);
+          try { 
+            toolResult = await tool.execute(toolParams); 
           } catch (err) {
-            toolResult = `Error executing tool: ${err.message}`;
+            toolResult = `[Tool Execution Failed]\nTool: ${toolName}\nError: ${err.message}\n\n(Analyze this error and decide your next step. You MUST reply in valid JSON format.)`;
           }
         } else {
-          toolResult = `Error: Tool '${toolName}' not found.`;
+          const mcp = require('./.deepseek/mcp/mcp_loader');
+          const isMcp = mcp.getRegistry().some(t => t.name === toolName);
+          if (isMcp) {
+            try { 
+              toolResult = await mcp.callTool(toolName, toolParams); 
+            } catch (err) {
+              toolResult = `[MCP Tool Execution Failed]\nTool: ${toolName}\nError: ${err.message}\n\n(Analyze this error and decide your next step. You MUST reply in valid JSON format.)`;
+            }
+          } else {
+            toolResult = `Error: Tool '${toolName}' not found locally or in MCP registry.`;
+          }
         }
-
-        toolItem.status = 'completed';
+        toolResult = safeTruncate(toolResult);
+        toolItem.status = "completed";
         toolItem.result = toolResult;
-        stopGlobalSpinner();
+        saveMessage(sid, "tool_result", toolResult, { tool: toolName });
 
+        stopGlobalSpinner();
         currentPrompt = `[Tool Output for ${toolName}]\n${toolResult}\n\nRemember to return your next response in JSON format.`;
         isInitial = false;
-
-        dsItem = { type: 'deepseek', text: '', spinning: true };
+        dsItem = { type: "deepseek", text: "", spinning: true };
         logItems.push(dsItem);
       } else {
         break;
       }
     }
-
   } catch (e) {
     if (dsItem && dsItem.spinning) {
       dsItem.spinning = false;
       stopGlobalSpinner();
     }
-    logItems.push({ type: 'separator' });
-    logItems.push({ type: 'error', message: e.message });
+    logItems.push({ type: "separator" });
+    logItems.push({ type: "error", message: e.message });
     renderLog();
   }
-
   busy = false;
   input.focus();
   scr.render();
 }
 
 // ── key bindings ──────────────────────────────────────────────────────────────
-// Bind scroll keys on the input widget itself — they fire even during readInput
-// because we intercept before grabKeys swallows them
-input.key(['pageup'], () => scrollUp());
-input.key(['pagedown'], () => scrollDown());
-input.key(['S-up'], () => scrollUp(3));
-input.key(['S-down'], () => scrollDown(3));
-input.key(['C-u'], () => scrollUp());
-input.key(['C-d'], () => scrollDown());
+input.key(["pageup"], () => scrollUp());
+input.key(["pagedown"], () => scrollDown());
+input.key(["S-up"], () => scrollUp(3));
+input.key(["S-down"], () => scrollDown(3));
+input.key(["C-u"], () => scrollUp());
+input.key(["C-d"], () => scrollDown());
 
-input.key('enter', () => {
+input.key("enter", () => {
   if (busy) return;
   const val = input.getValue().trim();
   if (!val) return;
   input.clearValue();
   scr.render();
+
+  if (val === "/chat") {
+    showChatHistory();
+    return;
+  }
+
+  if (val === "/new") {
+    logItems.length = 0;
+    createSession();
+    renderLog();
+
+    // Force focus back to the input box after the heavy screen wipe
+    input.focus();
+    scr.render();
+
+    getPage().then(async (page) => {
+      try {
+        await page.goto("https://chat.deepseek.com/");
+        await page.waitForTimeout(500);
+      } catch { }
+    });
+    return;
+  }
+
   ask(val).catch(() => { });
 });
 
-scr.key(['C-c'], () => process.exit(0));
+scr.key(["C-c"], () => process.exit(0));
 
-// ── boot ──────────────────────────────────────────────────────────────────────
+process.on("SIGINT", async () => {
+  if (_page) {
+    try {
+      await _page
+        .context()
+        .browser()
+        .close()
+        .catch(() => { });
+    } catch { }
+  }
+  try {
+    execSync('pkill -f "remote-debugging-port=9222"', { stdio: "ignore" });
+  } catch { }
+  process.exit(0);
+});
+
 if (require.main === module) {
+  initHistory();
+  mcpLoader.init().catch(console.error);
+  createSession();
   launchBrowser();
   getPage().catch(() => { });
   input.focus();

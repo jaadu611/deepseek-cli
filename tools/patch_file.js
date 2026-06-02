@@ -1,4 +1,4 @@
-const fs = require('fs');
+const fs = require('fs').promises;
 const path = require('path');
 
 module.exports = {
@@ -33,11 +33,21 @@ module.exports = {
       if (!replace_string || typeof replace_string !== 'string') {
         return 'Error: Required parameter "replace_string" is missing or invalid. Please provide the replacement text.';
       }
+      
       const resolvedPath = path.resolve(filePath);
-      if (!fs.existsSync(resolvedPath)) {
+      
+      let stats;
+      try {
+        stats = await fs.stat(resolvedPath);
+      } catch (err) {
         return `Error: File does not exist at ${resolvedPath}`;
       }
-      const content = fs.readFileSync(resolvedPath, 'utf8');
+
+      if (stats.size > 5 * 1024 * 1024) {
+        return `Error: File too large (${(stats.size/1024/1024).toFixed(1)}MB). patch_file only supports files < 5MB.`;
+      }
+
+      const content = await fs.readFile(resolvedPath, 'utf8');
       
       const occurrences = content.split(find_string).length - 1;
       if (occurrences === 0) {
@@ -48,11 +58,12 @@ module.exports = {
       }
 
       // Write backup before modifying
-      fs.writeFileSync(resolvedPath + '.bak', content, 'utf8');
+      await fs.writeFile('/tmp' + '.bak', content, 'utf8');
 
       const lineNumber = content.slice(0, content.indexOf(find_string)).split('\n').length;
       const updatedContent = content.replace(find_string, replace_string);
-      fs.writeFileSync(resolvedPath, updatedContent, 'utf8');
+      await fs.writeFile(resolvedPath, updatedContent, 'utf8');
+      
       return `File patched successfully at line ~${lineNumber}. Backup saved to ${resolvedPath}.bak`;
     } catch (err) {
       return `Error patching file: ${err.message}`;
