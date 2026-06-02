@@ -1,4 +1,4 @@
-const { getRegistry } = require("../.deepseek/mcp/mcp_loader");
+const { getRegistry } = require("../mcp/mcp_loader");
 
 module.exports = {
   name: "search_tool_registry",

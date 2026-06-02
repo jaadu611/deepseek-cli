@@ -1,10 +1,14 @@
 #!/usr/bin/env node
+const fs = require("fs");
+
+// Create mcp-sandbox directory at startup
+fs.mkdirSync("/tmp/mcp-sandbox", { recursive: true });
 const { chromium } = require("playwright");
 const { execSync } = require("child_process");
 const blessed = require("blessed");
 const http = require("http");
 const { tools, getSystemPrompt, normalizeToolCall } = require("./tools");
-const mcpLoader = require("./.deepseek/mcp/mcp_loader");
+const mcpLoader = require("./mcp/mcp_loader");
 const {
   initHistory,
   createSession,
@@ -31,6 +35,17 @@ const C = {
   you: fg(56, 189, 248),
   deepseek: fg(52, 211, 153),
 };
+
+const FORMAT_REMINDER = `
+
+[SYSTEM DIRECTIVE: JSON ENFORCEMENT]
+Your output is parsed by an automated pipeline. You MUST reply with EXACTLY ONE valid JSON object. Plain text causes a fatal system crash. Ensure json responses are plain not wrapped in markdown.
+Allowed shapes:
+1. Single Tool: {"tool": "name", "param": "value"}
+2. Parallel Tools: {"tools": [{"name": "t1", "p": "v"}, {"name": "t2", "p": "v"}]}
+3. Final Answer: {"response": "Your markdown text here"}
+
+(Amnesia Check: If you have executed multiple tools and lost the thread, use read_file on task.md to re-orient before deciding your next step.)`;
 
 // ── wrapping utility ─────────────────────────────────────────────────────────
 function wrapText(text, limit) {
@@ -604,6 +619,11 @@ async function ask(prompt) {
   busy = true;
   const sid = getCurrentSessionId();
 
+  if (!sid) {
+    const newSession = createSession(prompt.slice(0, 40));
+    sid = newSession.id;
+  }
+
   if (logItems.length > 0) {
     logItems.push({ type: "separator" });
     logItems.push({ type: "divider" });
@@ -737,8 +757,13 @@ async function ask(prompt) {
       }
 
       const parsed = extractJSON(fullText);
-      if (parsed && parsed.response) {
-        dsItem.text = parsed.response;
+      if (parsed && parsed.response !== undefined) {
+        let responseText = parsed.response;
+        // Force it to be a string so renderMd() doesn't crash on nested objects
+        if (typeof responseText === 'object' && responseText !== null) {
+          responseText = responseText.message || JSON.stringify(responseText, null, 2);
+        }
+        dsItem.text = String(responseText);
         if (thinkingText) dsItem.thinking = thinkingText;
         if (dsItem.thinking) dsItem._thinkingEndTime = Date.now();
         saveMessage(sid, "assistant", parsed.response, {
@@ -796,7 +821,7 @@ async function ask(prompt) {
             try { const out = await tool.execute(c); return safeTruncate(out === undefined || out === null ? '' : String(out)); }
             catch (err) { return safeTruncate(`Error executing tool: ${err.message}`); }
           } else {
-            const mcp = require('./.deepseek/mcp/mcp_loader');
+            const mcp = require('./mcp/mcp_loader');
             const isMcp = mcp.getRegistry().some(t => t.name === c.tool);
             if (isMcp) {
               try { const out = await mcp.callTool(c.tool, c); return safeTruncate(String(out)); }
@@ -821,27 +846,15 @@ async function ask(prompt) {
           calls.length > MAX_PARALLEL
             ? `\n\nNote: ${calls.length - MAX_PARALLEL} additional call(s) were truncated. Issue them in the next turn if still needed.`
             : "";
-        currentPrompt = `${combined}${overflowNote}\n\nRemember to return your next response in valid JSON. You may issue a single tool call, a parallel "tools" array of independent calls, or a final "response" object.`;
+        currentPrompt = `${combined}${overflowNote}${FORMAT_REMINDER}`;
         isInitial = false;
         dsItem = { type: "deepseek", text: "", spinning: true };
         logItems.push(dsItem);
       } else if (parsed && parsed.tool) {
         const toolName = parsed.tool;
-        const excludedKeys = ["tool", "response"];
-        let toolParams = parsed.parameters || {};
-        if (
-          typeof toolParams !== "object" ||
-          toolParams === null ||
-          Array.isArray(toolParams)
-        )
-          toolParams = {};
-        if (Object.keys(toolParams).length > 0) {
-        } else {
-          toolParams = {};
-          for (const key of Object.keys(parsed)) {
-            if (!excludedKeys.includes(key)) toolParams[key] = parsed[key];
-          }
-        }
+        // Cleanly extract all parameters using destructuring 
+        // (Our normalizer guarantees all params are flat on the root object now)
+        const { tool, ...toolParams } = parsed;
 
         const toolItem = {
           type: "tool",
@@ -854,20 +867,22 @@ async function ask(prompt) {
         saveMessage(sid, "tool_call", toolName, { params: toolParams });
 
         startGlobalSpinner();
-        const tool = tools[toolName];
+        const localTool = tools[toolName];
         let toolResult = '';
-        if (tool) {
-          try { 
-            toolResult = await tool.execute(toolParams); 
+
+        if (localTool) {
+          try {
+            toolResult = await localTool.execute(toolParams);
           } catch (err) {
             toolResult = `[Tool Execution Failed]\nTool: ${toolName}\nError: ${err.message}\n\n(Analyze this error and decide your next step. You MUST reply in valid JSON format.)`;
           }
         } else {
-          const mcp = require('./.deepseek/mcp/mcp_loader');
+          // MCP ROUTER
+          const mcp = require('./mcp/mcp_loader'); // Ensure this path is correct!
           const isMcp = mcp.getRegistry().some(t => t.name === toolName);
           if (isMcp) {
-            try { 
-              toolResult = await mcp.callTool(toolName, toolParams); 
+            try {
+              toolResult = await mcp.callTool(toolName, toolParams);
             } catch (err) {
               toolResult = `[MCP Tool Execution Failed]\nTool: ${toolName}\nError: ${err.message}\n\n(Analyze this error and decide your next step. You MUST reply in valid JSON format.)`;
             }
@@ -875,13 +890,17 @@ async function ask(prompt) {
             toolResult = `Error: Tool '${toolName}' not found locally or in MCP registry.`;
           }
         }
+
         toolResult = safeTruncate(toolResult);
         toolItem.status = "completed";
         toolItem.result = toolResult;
         saveMessage(sid, "tool_result", toolResult, { tool: toolName });
 
         stopGlobalSpinner();
-        currentPrompt = `[Tool Output for ${toolName}]\n${toolResult}\n\nRemember to return your next response in JSON format.`;
+
+        // CRITICAL: Notice we use `toolResult` here, NOT `combined` or `overflowNote`
+        currentPrompt = `[Tool Output for ${toolName}]\n${toolResult}${FORMAT_REMINDER}`;
+
         isInitial = false;
         dsItem = { type: "deepseek", text: "", spinning: true };
         logItems.push(dsItem);
@@ -925,7 +944,7 @@ input.key("enter", () => {
 
   if (val === "/new") {
     logItems.length = 0;
-    createSession();
+    setCurrentSessionId(null);
     renderLog();
 
     // Force focus back to the input box after the heavy screen wipe
@@ -965,7 +984,6 @@ process.on("SIGINT", async () => {
 if (require.main === module) {
   initHistory();
   mcpLoader.init().catch(console.error);
-  createSession();
   launchBrowser();
   getPage().catch(() => { });
   input.focus();
