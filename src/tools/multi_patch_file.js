@@ -116,8 +116,11 @@ module.exports = {
       }
 
       await fs.writeFile(resolvedPath, content, 'utf8');
-      const editSummary = appliedEdits.map((e, idx) => `  ${idx+1}: at line ~${e.line}`).join('\n');
-      return `File patched successfully with ${appliedEdits.length} edit(s):\n${editSummary}\nBackup saved to .ds_config/backups/ directory.`;
+      const linesModified = appliedEdits.map(e => `~${e.line}`).join(', ');
+      const totalRemoved = appliedEdits.reduce((acc, e) => acc + e.find_string.split('\n').length, 0);
+      const totalAdded = appliedEdits.reduce((acc, e) => acc + e.replace_string.split('\n').length, 0);
+      
+      return `[Success] File patched successfully at ${resolvedPath}\n- Total Edits: ${appliedEdits.length}\n- Lines Removed: ${totalRemoved}\n- Lines Added: ${totalAdded}\n- Lines Modified: ${linesModified}`;
     } catch (err) {
       return `Error in multi_patch_file: ${err.message}`;
     }

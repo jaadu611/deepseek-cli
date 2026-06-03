@@ -65,7 +65,7 @@ module.exports = {
       const end = Math.min(start + maxLimit, total);
       const paginated = results.slice(start, end);
       const hasMore = end < total;
-      let output = `Found ${total} result(s) for pattern /${pattern}/ in ${searchDir}:\n${paginated.join('\n')}`;
+      let output = `[Search Complete] Found ${total} result(s) for pattern /${pattern}/ in ${searchDir}:\n${paginated.join('\n')}`;
       if (hasMore) {
         output += `\n\n[Showing ${start+1}-${end} of ${total}. Use offset=${end}&limit=${maxLimit} to see more.]`;
       }

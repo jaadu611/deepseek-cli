@@ -78,7 +78,8 @@ module.exports = {
       }
 
       const selectedLines = lines.slice(start, end);
-      let result = selectedLines.join('\n');
+      const fileSizeKB = (stat.size / 1024).toFixed(2);
+      let result = `[File Details] Path: ${resolvedPath}, Lines: ${totalLines}, Size: ${fileSizeKB} KB\n\n` + selectedLines.join('\n');
 
       // Append metadata as comment if needed
       const hasMore = end < totalLines;

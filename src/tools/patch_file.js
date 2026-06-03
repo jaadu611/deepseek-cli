@@ -5,7 +5,7 @@ const { isPathAllowed, getPermissionErrorPath } = require('../utils/permissions'
 
 module.exports = {
   name: "patch_file",
-  description: "Modifies an existing file by replacing a specific string block with a new string block. Backup is saved to .ds_config/backups/.",
+  description: "Modifies an existing file by replacing a specific string block with a new string block. Backup is saved to ds_config/backups/.",
   parameters: {
     type: "object",
     properties: {
@@ -68,7 +68,9 @@ module.exports = {
       const updatedContent = content.replace(find_string, replace_string);
       await fs.writeFile(resolvedPath, updatedContent, 'utf8');
 
-      return `File patched successfully at line ~${lineNumber}. Backup saved to .ds_config/backups/ directory.`;
+      const removedLines = find_string.split('\n').length;
+      const addedLines = replace_string.split('\n').length;
+      return `[Success] File patched successfully at ${resolvedPath}\n- Line Modified: ~${lineNumber}\n- Lines Removed: ${removedLines}\n- Lines Added: ${addedLines}`;
     } catch (err) {
       return `Error patching file: ${err.message}`;
     }

@@ -97,7 +97,8 @@ module.exports = {
               return;
             }
 
-            const result = output.trim() || 'Command executed successfully with no output.';
+            const prefix = (exitCode === 0 && !timedOut) ? '[Command Success]\n' : '[Command Failed]\n';
+            const result = prefix + (output.trim() || 'Command executed successfully with no output.');
             resolve(result);
           });
         } catch (syncErr) {

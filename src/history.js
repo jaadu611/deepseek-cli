@@ -1,22 +1,37 @@
 const fs = require('fs');
 const path = require('path');
+const { getSessionsPath } = require('./utils/config');
 
-const HISTORY_DIR = path.join(process.cwd(), '.ds_config', 'sessions');
-const SESSIONS_DIR = path.join(HISTORY_DIR);  // flat: jsonl files go directly in sessions dir
+const HISTORY_DIR = getSessionsPath();
+const SESSIONS_DIR = HISTORY_DIR;
 const SESSIONS_INDEX = path.join(HISTORY_DIR, 'sessions.json');
-const GITIGNORE_PATH = path.join(process.cwd(), '.gitignore');
 
 let currentSessionId = null;
 
+function getGitignorePath() {
+  try {
+    const cwd = process.cwd();
+    return path.join(cwd, '.gitignore');
+  } catch (err) {
+    return null;
+  }
+}
+
 function initHistory() {
+  // No migration needed; all data now lives in global ~/.deepseek_cli/ds_config
   if (!fs.existsSync(HISTORY_DIR)) fs.mkdirSync(HISTORY_DIR, { recursive: true });
   if (!fs.existsSync(SESSIONS_DIR)) fs.mkdirSync(SESSIONS_DIR, { recursive: true });
   if (!fs.existsSync(SESSIONS_INDEX)) fs.writeFileSync(SESSIONS_INDEX, '[]', 'utf8');
   
-  if (fs.existsSync(GITIGNORE_PATH)) {
-    const ignoreContent = fs.readFileSync(GITIGNORE_PATH, 'utf8');
-    if (!ignoreContent.includes('.ds_config/')) {
-      fs.appendFileSync(GITIGNORE_PATH, '\n# Deepseek CLI local history\n.ds_config/\n');
+  const gitignorePath = getGitignorePath();
+  if (gitignorePath && fs.existsSync(gitignorePath)) {
+    try {
+      const ignoreContent = fs.readFileSync(gitignorePath, 'utf8');
+      if (!ignoreContent.includes('ds_config/')) {
+        fs.appendFileSync(gitignorePath, '\n# Deepseek CLI local data\nds_config/\nscratch/\n');
+      }
+    } catch (err) {
+      // ignore errors updating .gitignore
     }
   }
 }
@@ -24,12 +39,28 @@ function initHistory() {
 function getSessions() {
   initHistory();
   try {
-    return JSON.parse(fs.readFileSync(SESSIONS_INDEX, 'utf8'));
-  } catch { return []; }
+    const data = fs.readFileSync(SESSIONS_INDEX, 'utf8');
+    if (!data.trim()) return [];
+    return JSON.parse(data);
+  } catch (err) {
+    try {
+      if (fs.existsSync(SESSIONS_INDEX)) {
+        const backupName = `sessions.json.corrupted.${Date.now()}`;
+        fs.renameSync(SESSIONS_INDEX, path.join(path.dirname(SESSIONS_INDEX), backupName));
+      }
+    } catch (e) {}
+    return [];
+  }
 }
 
 function saveSessions(sessions) {
-  fs.writeFileSync(SESSIONS_INDEX, JSON.stringify(sessions, null, 2), 'utf8');
+  const tempPath = SESSIONS_INDEX + '.tmp';
+  try {
+    fs.writeFileSync(tempPath, JSON.stringify(sessions, null, 2), 'utf8');
+    fs.renameSync(tempPath, SESSIONS_INDEX);
+  } catch (err) {
+    fs.writeFileSync(SESSIONS_INDEX, JSON.stringify(sessions, null, 2), 'utf8');
+  }
 }
 
 function createSession(title = 'New Chat') {

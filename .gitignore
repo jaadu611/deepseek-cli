@@ -2,5 +2,7 @@ node_modules/
 implementation_plan.md
 task.md
 
-# Deepseek CLI local history
-.ds_config/
+# Deepseek CLI local data (scratch, backups, sessions)
+ds_config/
+scratch/
+workflows/

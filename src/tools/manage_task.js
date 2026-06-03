@@ -3,7 +3,7 @@ const path = require('path');
 
 module.exports = {
   name: "manage_task",
-  description: "Creates or updates the task.md checklist file in the CLI root directory to track progress on completed, in-progress, and pending tasks.",
+  description: "Creates or updates the task.md checklist file in the current working directory to track progress on completed, in-progress, and pending tasks.",
   parameters: {
     type: "object",
     properties: {
@@ -19,7 +19,8 @@ module.exports = {
       if (!task_markdown || typeof task_markdown !== 'string') {
         return 'Error: Required parameter "task_markdown" is missing or invalid. You must provide the task content as a string.';
       }
-      const taskPath = path.join(__dirname, '../task.md');
+      const repoRoot = path.join(__dirname, '..', '..');
+      const taskPath = path.join(repoRoot, 'task.md');
       fs.writeFileSync(taskPath, task_markdown, 'utf8');
       return `Checklist updated successfully at ${taskPath}`;
     } catch (err) {

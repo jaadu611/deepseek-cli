@@ -1,7 +1,8 @@
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 
-const DS_CONFIG_DIR = path.join(process.cwd(), '.ds_config');
+const DS_CONFIG_DIR = path.join(os.homedir(), '.deepseek_cli', 'ds_config');
 const CONFIG_PATH = path.join(DS_CONFIG_DIR, 'config.json');
 const CONTEXT_CACHE_PATH = path.join(DS_CONFIG_DIR, 'context_cache.json');
 
@@ -23,7 +24,8 @@ function loadConfig() {
   ensureConfigDir();
   const defaults = {
     allowed_directories: [],
-    blocked_commands: []
+    blocked_commands: [],
+    max_tool_output_length: 4000
   };
   if (fs.existsSync(CONFIG_PATH)) {
     try {

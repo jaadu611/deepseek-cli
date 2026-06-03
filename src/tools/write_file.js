@@ -5,7 +5,7 @@ const { isPathAllowed, getPermissionErrorPath } = require('../utils/permissions'
 
 module.exports = {
   name: "write_file",
-  description: "Creates a new file or completely overwrites an existing file with new content. Optionally creates a backup in .ds_config/backups/.",
+  description: "Creates a new file or completely overwrites an existing file with new content. Optionally creates a backup in ds_config/backups/.",
   parameters: {
     type: "object",
     properties: {
@@ -43,7 +43,9 @@ module.exports = {
 
       fs.mkdirSync(path.dirname(resolvedPath), { recursive: true });
       fs.writeFileSync(resolvedPath, content, 'utf8');
-      return `File written successfully to ${resolvedPath}`;
+      
+      const lineCount = content.split('\n').length;
+      return `[Success] File written to ${resolvedPath}\n- Lines: ${lineCount}\n- Size: ${(content.length / 1024).toFixed(2)} KB`;
     } catch (err) {
       return `Error writing file: ${err.message}`;
     }
