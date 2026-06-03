@@ -3,4 +3,4 @@ implementation_plan.md
 task.md
 
 # Deepseek CLI local history
-sessions/
+.ds_config/

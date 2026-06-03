@@ -21,131 +21,57 @@ const {
   getSessions,
 } = require("./history");
 
-// ── colors ────────────────────────────────────────────────────────────────────
+process.on("unhandledRejection", (reason) => {
+  if (busy) {
+    logItems.push({ type: "error", message: `Unhandled error: ${reason}` });
+    busy = false;
+    if (globalSpinInterval) clearInterval(globalSpinInterval);
+    renderLog();
+  }
+  console.error("Unhandled rejection:", reason);
+});
+
+// ── palette ───────────────────────────────────────────────────────────────────
 const R = "\x1b[0m";
 const fg = (r, g, b) => `\x1b[38;2;${r};${g};${b}m`;
+const bg = (r, g, b) => `\x1b[48;2;${r};${g};${b}m`;
+
 const C = {
-  body: fg(200, 200, 200),
-  dim: fg(110, 110, 110),
+  body: fg(210, 210, 210),
+  dim: fg(90, 90, 90),
+  dimmer: fg(58, 58, 58),
+  muted: fg(130, 130, 130),
   bold: fg(255, 255, 255),
-  italic: fg(160, 160, 160),
-  code: fg(234, 234, 234),
-  bullet: fg(110, 110, 110),
-  red: fg(255, 100, 100),
-  you: fg(56, 189, 248),
-  deepseek: fg(52, 211, 153),
+  italic: fg(155, 155, 155),
+  code: fg(200, 230, 200),
+  accent: fg(82, 196, 196),
+  accentB: fg(48, 140, 140),
+  you: fg(82, 196, 196),
+  ai: fg(190, 190, 190),
+  think: fg(88, 88, 88),
+  tool: fg(110, 120, 100),
+  err: fg(200, 80, 80),
+  sep: fg(45, 45, 45),
+  codeBorder: fg(60, 60, 60),
 };
 
-const FORMAT_REMINDER = `
+const FORMAT_REMINDER = `[SYSTEM: Single JSON tool call only. No parallel tools.]`;
 
-[SYSTEM DIRECTIVE: JSON ENFORCEMENT]
-Your output is parsed by an automated pipeline. You MUST reply with EXACTLY ONE valid JSON object. Plain text causes a fatal system crash. Ensure json responses are plain not wrapped in markdown.
-Allowed shapes:
-1. Single Tool: {"tool": "name", "param": "value"}
-2. Parallel Tools: {"tools": [{"name": "t1", "p": "v"}, {"name": "t2", "p": "v"}]}
-3. Final Answer: {"response": "Your markdown text here"}
-
-(Amnesia Check: If you have executed multiple tools and lost the thread, use read_file on task.md to re-orient before deciding your next step.)`;
-
-// ── wrapping utility ─────────────────────────────────────────────────────────
+// ── wrapping ──────────────────────────────────────────────────────────────────
 function wrapText(text, limit) {
   if (!text) return [""];
   const words = text.split(" ");
   const lines = [];
-  let currentLine = "";
-  for (const word of words) {
-    if (currentLine.length + word.length > limit) {
-      lines.push(currentLine.trimEnd());
-      currentLine = word + " ";
-    } else {
-      currentLine += word + " ";
-    }
+  let cur = "";
+  for (const w of words) {
+    if (cur.length + w.length > limit) { lines.push(cur.trimEnd()); cur = w + " "; }
+    else cur += w + " ";
   }
-  if (currentLine) lines.push(currentLine.trimEnd());
-  return lines;
+  if (cur) lines.push(cur.trimEnd());
+  return lines.length ? lines : [""];
 }
 
-// ── markdown renderer ─────────────────────────────────────────────────────────
-function renderMd(raw) {
-  const width = chat && chat.width ? chat.width : scr.width || 80;
-  const limit = Math.max(20, width - 7);
-  const lines = raw.trim().split("\n");
-  const out = [];
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    const fence = line.match(/^```(\w*)/);
-    if (fence) {
-      const lang = fence[1] || "code";
-      const codeLines = [];
-      i++;
-      while (i < lines.length && !lines[i].startsWith("```")) {
-        codeLines.push(lines[i]);
-        i++;
-      }
-      let maxLen = 40;
-      for (const cl of codeLines) {
-        if (cl.length > maxLen) maxLen = cl.length;
-      }
-      const boxLimit = Math.min(limit - 4, 65);
-      if (maxLen > boxLimit) maxLen = boxLimit;
-      const title = " " + lang + " ";
-      const topBar = "┌─" + title + "─".repeat(maxLen - title.length) + "┐";
-      out.push(C.dim + topBar + R);
-      for (const cl of codeLines) {
-        let content = cl;
-        if (content.length > maxLen)
-          content = content.substring(0, maxLen - 3) + "...";
-        const padded = content.padEnd(maxLen, " ");
-        out.push(C.dim + "│ " + R + C.code + padded + R + C.dim + "│" + R);
-      }
-      out.push(C.dim + "└─" + "─".repeat(maxLen) + "┘" + R);
-      continue;
-    }
-    const hm = line.match(/^(#{1,3}) (.*)/);
-    if (hm) {
-      if (out.length && out[out.length - 1] !== "") out.push("");
-      const wrapped = wrapText(hm[2], limit);
-      for (const wl of wrapped) out.push(C.bold + "\x1b[1m" + inline(wl) + R);
-      continue;
-    }
-    if (/^(-{3,}|\*{3,})$/.test(line.trim())) {
-      out.push(C.dim + "─".repeat(Math.min(55, limit)) + R);
-      continue;
-    }
-    const ul = line.match(/^[ \t]*[-*+] (.*)/);
-    if (ul) {
-      const wrapped = wrapText(ul[1], limit - 4);
-      out.push(C.dim + " · " + R + C.body + inline(wrapped[0]) + R);
-      for (let j = 1; j < wrapped.length; j++)
-        out.push("   " + C.body + inline(wrapped[j]) + R);
-      continue;
-    }
-    const ol = line.match(/^[ \t]*\d+[.)]\s+(.*)/);
-    if (ol) {
-      const wrapped = wrapText(ol[1], limit - 4);
-      out.push(C.dim + " · " + R + C.body + inline(wrapped[0]) + R);
-      for (let j = 1; j < wrapped.length; j++)
-        out.push("   " + C.body + inline(wrapped[j]) + R);
-      continue;
-    }
-    const bq = line.match(/^> (.*)/);
-    if (bq) {
-      const wrapped = wrapText(bq[1], limit - 4);
-      for (const wl of wrapped)
-        out.push(C.dim + " ┃ " + R + C.italic + "\x1b[3m" + inline(wl) + R);
-      continue;
-    }
-    if (line.trim() === "") {
-      if (out.length && out[out.length - 1] !== "") out.push("");
-      continue;
-    }
-    const wrapped = wrapText(line, limit);
-    for (const wl of wrapped) out.push(C.body + inline(wl) + R);
-  }
-  while (out.length && out[out.length - 1] === "") out.pop();
-  return out;
-}
-
+// ── inline markdown (single-line) ────────────────────────────────────────────
 function inline(s) {
   const b = C.body;
   return s
@@ -158,14 +84,112 @@ function inline(s) {
     .replace(/(?<!\w)_([^_\n]+?)_(?!\w)/g, "\x1b[3m" + C.italic + "$1" + R + b);
 }
 
+// ── block markdown renderer ───────────────────────────────────────────────────
+function renderMd(raw) {
+  const width = chat && chat.width ? chat.width : scr.width || 80;
+  const limit = Math.max(20, width - 7);
+  const lines = raw.trim().split("\n");
+  const out = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    const fence = line.match(/^```(\w*)/);
+    if (fence) {
+      const lang = fence[1] || "text";
+      const codeLines = [];
+      i++;
+      while (i < lines.length && !lines[i].startsWith("```")) {
+        codeLines.push(lines[i]);
+        i++;
+      }
+      const inner = Math.min(Math.max(...codeLines.map(l => l.length), 4), limit - 4);
+      const langLabel = lang ? ` ${lang} ` : " text ";
+      const bar = "─".repeat(Math.max(0, inner - langLabel.length));
+      out.push(C.codeBorder + "╭" + langLabel + bar + "╮" + R);
+      for (const cl of codeLines) {
+        const content = cl.length > inner ? cl.slice(0, inner - 1) + "…" : cl;
+        out.push(C.codeBorder + "│" + R + " " + C.code + content.padEnd(inner - 1) + R + " " + C.codeBorder + "│" + R);
+      }
+      out.push(C.codeBorder + "╰" + "─".repeat(inner) + "╯" + R);
+      continue;
+    }
+
+    const hm = line.match(/^(#{1,3}) (.*)/);
+    if (hm) {
+      if (out.length && out[out.length - 1] !== "") out.push("");
+      const level = hm[1].length;
+      const prefix = level === 1 ? "§ " : level === 2 ? "· " : "  ";
+      for (const wl of wrapText(hm[2], limit))
+        out.push(C.accent + prefix + R + "\x1b[1m" + C.bold + inline(wl) + R);
+      out.push("");
+      continue;
+    }
+
+    if (/^(-{3,}|\*{3,}|_{3,})$/.test(line.trim())) {
+      out.push(C.sep + "─".repeat(Math.min(55, limit)) + R);
+      continue;
+    }
+
+    const ul = line.match(/^[ \t]*[-*+] (.*)/);
+    if (ul) {
+      const wrapped = wrapText(ul[1], limit - 4);
+      out.push(C.accentB + "  ▸ " + R + C.body + inline(wrapped[0]) + R);
+      for (let j = 1; j < wrapped.length; j++)
+        out.push("    " + C.body + inline(wrapped[j]) + R);
+      continue;
+    }
+
+    const ol = line.match(/^[ \t]*(\d+)[.)]\s+(.*)/);
+    if (ol) {
+      const wrapped = wrapText(ol[2], limit - 5);
+      out.push(C.muted + "  " + ol[1].padStart(2) + ". " + R + C.body + inline(wrapped[0]) + R);
+      for (let j = 1; j < wrapped.length; j++)
+        out.push("       " + C.body + inline(wrapped[j]) + R);
+      continue;
+    }
+
+    const bq = line.match(/^> (.*)/);
+    if (bq) {
+      for (const wl of wrapText(bq[1], limit - 4))
+        out.push(C.accentB + " ▎ " + R + "\x1b[3m" + C.italic + inline(wl) + R);
+      continue;
+    }
+
+    if (line.trim() === "") {
+      if (out.length && out[out.length - 1] !== "") out.push("");
+      continue;
+    }
+
+    for (const wl of wrapText(line, limit))
+      out.push(C.body + inline(wl) + R);
+  }
+
+  while (out.length && out[out.length - 1] === "") out.pop();
+  return out;
+}
+
 // ── browser ───────────────────────────────────────────────────────────────────
 let _page = null;
 let _initializing = null;
 
+let _streamDone = false;
+let _thinkingChunks = [];
+let _responseChunks = [];
+let _isThinking = false;
+let _streamBuffer = "";
+
+function resetStreamState() {
+  _streamDone = false;
+  _thinkingChunks = [];
+  _responseChunks = [];
+  _isThinking = false;
+  _streamBuffer = "";
+}
+
 function launchBrowser() {
-  try {
-    execSync('pgrep -f "remote-debugging-port=9222"', { stdio: "ignore" });
-  } catch {
+  try { execSync('pgrep -f "remote-debugging-port=9222"', { stdio: "ignore" }); }
+  catch {
     execSync(
       'chromium --headless=new --remote-debugging-port=9222 --user-data-dir="$HOME/scraper-profile" &',
       { shell: true, stdio: "ignore" },
@@ -183,37 +207,141 @@ async function waitForCDP(port = 9222, timeout = 10000) {
           else reject(new Error("Status " + res.statusCode));
         });
         req.on("error", reject);
-        req.setTimeout(1000, () => {
-          req.destroy();
-          reject(new Error("Timeout"));
-        });
+        req.setTimeout(1000, () => { req.destroy(); reject(new Error("Timeout")); });
       });
       return true;
-    } catch {
-      await new Promise((r) => setTimeout(r, 300));
-    }
+    } catch { await new Promise(r => setTimeout(r, 300)); }
   }
   throw new Error("Chromium CDP port did not open in time");
 }
 
+const _exposedPages = new WeakSet();
+
+async function setupInterceptors(page) {
+  if (!_exposedPages.has(page)) {
+    _exposedPages.add(page);
+    await page.exposeFunction("_onNetworkChunk", processNetworkChunk);
+    await page.exposeFunction("_onStreamEnd", () => { _streamDone = true; });
+  }
+
+  await page.evaluate(() => {
+    if (window.__interceptorsInstalled) return;
+    window.__interceptorsInstalled = true;
+
+    const origFetch = window.fetch;
+    window.fetch = async function (...args) {
+      const url = args[0] instanceof Request ? args[0].url : String(args[0]);
+      const response = await origFetch.apply(this, args);
+      if (url.includes("/api/v0/chat/completion")) {
+        const clone = response.clone();
+        (async () => {
+          const reader = clone.body.getReader();
+          const decoder = new TextDecoder();
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) { window._onStreamEnd(); break; }
+            window._onNetworkChunk(decoder.decode(value, { stream: true }));
+          }
+        })().catch(() => { });
+      }
+      return response;
+    };
+
+    const OrigXHR = window.XMLHttpRequest;
+    window.XMLHttpRequest = function () {
+      const xhr = new OrigXHR();
+      let lastLen = 0;
+      xhr.addEventListener("readystatechange", function () {
+        if (xhr.readyState > 2 && xhr.responseURL?.includes("/api/v0/chat/completion")) {
+          const text = xhr.responseText || "";
+          if (text.length > lastLen) {
+            window._onNetworkChunk(text.substring(lastLen));
+            lastLen = text.length;
+          }
+          if (xhr.readyState === 4) window._onStreamEnd();
+        }
+      });
+      return xhr;
+    };
+    Object.assign(window.XMLHttpRequest, OrigXHR);
+  });
+}
+
+function processNetworkChunk(text) {
+  _streamBuffer += text;
+  const lines = _streamBuffer.split("\n");
+  _streamBuffer = lines.pop();
+
+  for (let line of lines) {
+    line = line.trim();
+    if (!line) continue;
+
+    // Handle SSE "data: {...}" or just "{...}"
+    let jsonStr = line;
+    if (line.startsWith("data:")) {
+      jsonStr = line.substring(5).trim();
+    }
+    if (!jsonStr || jsonStr === "[DONE]") {
+      if (jsonStr === "[DONE]") _streamDone = true;
+      continue;
+    }
+
+    let json;
+    try {
+      json = JSON.parse(jsonStr);
+    } catch {
+      // Maybe it's a raw JSON line without data: prefix
+      try {
+        json = JSON.parse(line);
+      } catch {
+        continue;
+      }
+    }
+
+    // Detect stream end – many possible shapes
+    if (
+      json === "[DONE]" ||
+      json.p === "response/status" && json.v === "FINISHED" ||
+      json.p === "response" && json.v?.quasi_status === "FINISHED" ||
+      json.v?.[0]?.quasi_status === "FINISHED" ||
+      json.quasi_status === "FINISHED" ||
+      json.status === "FINISHED"
+    ) {
+      _streamDone = true;
+      continue;
+    }
+
+    // Extract fragments (THINK / RESPONSE)
+    const fragments = json.v?.response?.fragments || (Array.isArray(json.v) ? json.v : []);
+    for (const frag of fragments) {
+      if (frag.type === "THINK") _isThinking = true;
+      if (frag.type === "RESPONSE") _isThinking = false;
+      if (typeof frag.content === "string" && frag.content) {
+        (_isThinking ? _thinkingChunks : _responseChunks).push(frag.content);
+      }
+    }
+
+    // Fallback: if json.v is a string and not a status
+    if (typeof json.v === "string" && json.p !== "response/status") {
+      (_isThinking ? _thinkingChunks : _responseChunks).push(json.v);
+    }
+  }
+}
+
 async function getPage() {
   if (_page) {
-    try {
-      await _page.evaluate("1");
-      return _page;
-    } catch {
-      _page = null;
-      _initializing = null;
-    }
+    try { await _page.evaluate("1"); return _page; }
+    catch { _page = null; _initializing = null; }
   }
   if (_initializing) return _initializing;
   _initializing = (async () => {
     await waitForCDP();
     const browser = await chromium.connectOverCDP("http://localhost:9222");
     const ctx = browser.contexts()[0];
-    let page = ctx.pages().find((p) => p.url().includes("chat.deepseek.com"));
+    let page = ctx.pages().find(p => p.url().includes("chat.deepseek.com"));
     if (!page) page = await ctx.newPage();
     await page.goto("https://chat.deepseek.com/");
+    await setupInterceptors(page);
     _page = page;
     _initializing = null;
     return page;
@@ -221,22 +349,18 @@ async function getPage() {
   return _initializing;
 }
 
+// ── fast submit ───────────────────────────────────────────────────────────────
 async function submitPrompt(page, prompt) {
   const textarea = page.locator("textarea").first();
   await textarea.waitFor({ state: "visible", timeout: 10000 });
-  await page.waitForTimeout(300);
-  await page.evaluate((text) => {
-    const ta = document.querySelector("textarea");
-    if (!ta) return;
-    const nativeSetter = Object.getOwnPropertyDescriptor(
-      window.HTMLTextAreaElement.prototype,
-      "value",
-    ).set;
-    nativeSetter.call(ta, text);
-    ta.dispatchEvent(new Event("input", { bubbles: true }));
-    ta.dispatchEvent(new Event("change", { bubbles: true }));
-  }, prompt);
-  await page.waitForTimeout(300);
+  await page.waitForFunction(
+    (ta) => !ta.disabled && !ta.readOnly,
+    textarea.elementHandle(),
+    { timeout: 5000 }
+  );
+  await textarea.fill(prompt);
+  await textarea.focus();
+
   const sendSelectors = [
     'button[aria-label="Send Message"]',
     'button[aria-label="Send"]',
@@ -247,68 +371,155 @@ async function submitPrompt(page, prompt) {
   for (const sel of sendSelectors) {
     try {
       const btn = page.locator(sel).last();
-      if (await btn.isVisible({ timeout: 500 })) {
+      if (await btn.isVisible({ timeout: 100 })) {
         await btn.click();
         sent = true;
         break;
       }
     } catch { }
   }
-  if (!sent) await page.keyboard.press("Enter");
-  await page.waitForTimeout(200);
+  if (!sent) {
+    await textarea.focus();
+    await textarea.press("Enter");
+  }
 }
 
-// ── TUI ───────────────────────────────────────────────────────────────────────
+// ── stream collector (drives live UI) ────────────────────────────────────────
+async function collectStream(dsItem, onUpdate) {
+  const IDLE_TIMEOUT_MS = 15000; // 15 seconds without new data = assume end
+  let lastDataTime = Date.now();
+  let firstChunkSeen = false;
+
+  // Helper to check if we're done
+  const checkDone = () => {
+    if (_streamDone) return true;
+    // If we have any response content and no new data for 15 sec, treat as done
+    if ((_thinkingChunks.length || _responseChunks.length) && (Date.now() - lastDataTime > IDLE_TIMEOUT_MS)) {
+      _streamDone = true;
+      return true;
+    }
+    return false;
+  };
+
+  // If already done, just collect final
+  if (_streamDone) {
+    if (_streamBuffer.trim()) processNetworkChunk("\n");
+    const thinkSoFar = _thinkingChunks.join("");
+    const respSoFar = _responseChunks.join("");
+    dsItem.thinking = thinkSoFar;
+    dsItem.text = respSoFar;
+    dsItem.spinning = false;
+    if (thinkSoFar) dsItem.expanded = false;
+    onUpdate();
+    stopGlobalSpinner();
+    return { thinkingText: thinkSoFar, responseText: respSoFar };
+  }
+
+  while (!_streamDone && !checkDone()) {
+    await new Promise(r => setTimeout(r, 100)); // check every 100ms
+    const thinkSoFar = _thinkingChunks.join("");
+    const respSoFar = _responseChunks.join("");
+
+    if (!firstChunkSeen && (thinkSoFar || respSoFar)) {
+      firstChunkSeen = true;
+      dsItem.spinning = false;
+      dsItem.expanded = true;
+      stopGlobalSpinner();
+    }
+
+    if (firstChunkSeen) {
+      dsItem.thinking = thinkSoFar;
+      dsItem.text = respSoFar;
+      if (!dsItem._thinkingStartTime && thinkSoFar)
+        dsItem._thinkingStartTime = Date.now();
+      onUpdate();
+      lastDataTime = Date.now(); // reset idle timer whenever we have content
+    }
+  }
+
+  // Final flush
+  if (_streamBuffer.trim()) processNetworkChunk("\n");
+  const thinkSoFar = _thinkingChunks.join("");
+  const respSoFar = _responseChunks.join("");
+  dsItem.thinking = thinkSoFar;
+  dsItem.text = respSoFar;
+  dsItem.spinning = false;
+  if (thinkSoFar) dsItem.expanded = false;
+  onUpdate();
+  stopGlobalSpinner();
+
+  return { thinkingText: thinkSoFar, responseText: respSoFar };
+}
+
+// ── TUI layout ────────────────────────────────────────────────────────────────
 const scr = blessed.screen({
   smartCSR: true,
   fullUnicode: true,
   title: "deepseek",
   ignoreLocked: ["C-c"],
 });
+
+const topBar = blessed.box({
+  top: 0, left: 0, right: 0, height: 1,
+  tags: false,
+  style: { bg: "default", fg: "#5a5a5a" },
+  padding: { left: 2 },
+  content: " deepseek ",
+});
+
 const chat = blessed.box({
-  top: 0,
-  left: 0,
-  right: 0,
-  bottom: 3,
+  top: 1,
+  left: 0, right: 0, bottom: 3,
   scrollable: true,
   alwaysScroll: true,
   mouse: true,
   keys: false,
   tags: false,
   wrap: false,
-  scrollbar: { ch: " ", style: { bg: "#3e4452" }, track: { bg: "default" } },
-  padding: { left: 2, right: 2, top: 0 },
-  style: { bg: "default", fg: "#c8c8c8" },
+  scrollbar: {
+    ch: "│",
+    style: { fg: "#2a2a2a" },
+    track: { bg: "default" },
+  },
+  padding: { left: 3, right: 3, top: 1 },
+  style: { bg: "default", fg: "#d2d2d2" },
 });
+
+const inputSep = blessed.line({
+  bottom: 3, left: 0, right: 0,
+  orientation: "horizontal",
+  style: { fg: "#2a2a2a" },
+});
+
 const input = blessed.textbox({
-  bottom: 0,
-  left: 0,
-  right: 0,
-  height: 3,
+  bottom: 0, left: 0, right: 0, height: 3,
   inputOnFocus: true,
-  padding: { left: 3, right: 2 },
+  padding: { left: 4, right: 3 },
   style: {
     bg: "default",
     fg: "#c8c8c8",
-    border: { fg: "#3e4452" },
-    focus: { border: { fg: "#ffffff" } },
+    border: { fg: "#1e1e1e" },
+    focus: { border: { fg: "#3a3a3a" } },
   },
   border: { type: "line" },
 });
+
+scr.append(topBar);
 scr.append(chat);
+scr.append(inputSep);
 scr.append(input);
 
-function scrollDown(n) {
-  chat.scroll(n || chat.height);
-  scr.render();
-}
-function scrollUp(n) {
-  chat.scroll(-(n || chat.height));
+function setTopBarTitle(title) {
+  const truncated = title && title.length > 60 ? title.slice(0, 57) + "…" : (title || "deepseek");
+  topBar.setContent(C.dimmer + "  " + truncated + R);
   scr.render();
 }
 
+function scrollDown(n) { chat.scroll(n || chat.height); scr.render(); }
+function scrollUp(n) { chat.scroll(-(n || chat.height)); scr.render(); }
+
 // ── spinner ───────────────────────────────────────────────────────────────────
-const FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+const FRAMES = ["⠁", "⠂", "⠄", "⡀", "⢀", "⠠", "⠐", "⠈"];
 let spinFrame = 0;
 let activeSpinners = 0;
 let globalSpinInterval = null;
@@ -317,12 +528,8 @@ let lineToItem = [];
 
 function startGlobalSpinner() {
   activeSpinners++;
-  renderLog();
   if (globalSpinInterval) return;
-  globalSpinInterval = setInterval(() => {
-    spinFrame++;
-    renderLog();
-  }, 80);
+  globalSpinInterval = setInterval(() => { spinFrame++; renderLog(); }, 100);
 }
 function stopGlobalSpinner() {
   activeSpinners = Math.max(0, activeSpinners - 1);
@@ -330,272 +537,207 @@ function stopGlobalSpinner() {
     clearInterval(globalSpinInterval);
     globalSpinInterval = null;
   }
-  renderLog();
 }
 
+// ── JSON extraction ───────────────────────────────────────────────────────────
 function extractJSON(text) {
   if (!text) return null;
-  const codeBlockRegex = /```(?:json)?\s*([\s\S]*?)\s*```/g;
-  let match;
-  while ((match = codeBlockRegex.exec(text)) !== null) {
-    const candidate = match[1].trim();
-    try {
-      const parsed = JSON.parse(candidate);
-      if (parsed) return normalizeToolCall(parsed);
-    } catch { }
-    const brace = candidate.match(/\{[\s\S]*\}/);
-    if (brace) {
-      try {
-        const parsed = JSON.parse(brace[0]);
-        if (parsed) return normalizeToolCall(parsed);
-      } catch { }
-    }
+  const cbRe = /```(?:json)?\s*([\s\S]*?)\s*```/g;
+  let m;
+  while ((m = cbRe.exec(text)) !== null) {
+    try { const p = JSON.parse(m[1].trim()); if (p) return normalizeToolCall(p); } catch { }
+    const br = m[1].match(/\{[\s\S]*\}/);
+    if (br) { try { const p = JSON.parse(br[0]); if (p) return normalizeToolCall(p); } catch { } }
   }
-  let searchIdx = text.length - 1;
-  while (searchIdx >= 0) {
-    const braceIdx = text.lastIndexOf("{", searchIdx);
-    if (braceIdx < 0) break;
-    const candidate = text.substring(braceIdx);
-    try {
-      const parsed = JSON.parse(candidate);
-      if (parsed) return normalizeToolCall(parsed);
-    } catch { }
-    searchIdx = braceIdx - 1;
+  let si = text.length - 1;
+  while (si >= 0) {
+    const bi = text.lastIndexOf("{", si);
+    if (bi < 0) break;
+    try { const p = JSON.parse(text.substring(bi)); if (p) return normalizeToolCall(p); } catch { }
+    si = bi - 1;
   }
   return null;
 }
 
 const MAX_TOOL_OUTPUT = 4000;
 function safeTruncate(text) {
-  if (!text) return "";
-  const str = String(text);
-  if (str.length <= MAX_TOOL_OUTPUT) return str;
-  return (
-    str.slice(0, MAX_TOOL_OUTPUT) +
-    `\n\n[Output truncated: ${str.length - MAX_TOOL_OUTPUT} chars omitted]`
-  );
+  const s = String(text ?? "");
+  if (s.length <= MAX_TOOL_OUTPUT) return s;
+  return s.slice(0, MAX_TOOL_OUTPUT) + `\n\n[truncated: ${s.length - MAX_TOOL_OUTPUT} chars omitted]`;
 }
 
+// ── render ────────────────────────────────────────────────────────────────────
 function renderLog() {
   const lines = [];
   lineToItem = [];
+
   for (let idx = 0; idx < logItems.length; idx++) {
     const item = logItems[idx];
     const itemLines = [];
+
     if (item.type === "user") {
-      const limit = (scr.width || 80) - 7;
+      const limit = Math.max(20, (chat.width || scr.width || 80) - 9);
       const wrapped = wrapText(item.text, limit);
-      itemLines.push(C.you + "○  " + R + C.body + wrapped[0] + R);
+      itemLines.push(C.you + "  ›  " + R + C.body + wrapped[0] + R);
       for (let i = 1; i < wrapped.length; i++)
-        itemLines.push(" ".repeat(3) + C.body + wrapped[i] + R);
+        itemLines.push("     " + C.body + wrapped[i] + R);
+
     } else if (item.type === "deepseek") {
-      if (item.text === "" && !item.thinking && item.spinning) {
-        itemLines.push(
-          C.deepseek +
-          "●  " +
-          R +
-          C.dim +
-          FRAMES[spinFrame % FRAMES.length] +
-          R,
-        );
-      } else if (item.thinking || item.text) {
+      if (!item.text && !item.thinking && item.spinning) {
+        itemLines.push(C.dimmer + "  " + FRAMES[spinFrame % FRAMES.length] + R);
+      } else {
         const limit = Math.max(20, (chat.width || scr.width || 80) - 7);
+
         if (item.thinking) {
           if (item.expanded) {
-            const thinkLines = wrapText(item.thinking, limit);
-            const prevDeepseek = logItems
-              .slice(0, idx)
-              .reverse()
-              .find((prev) => prev.type === "deepseek");
-            const isFirstInChain = !prevDeepseek?.thinking;
-            for (let i = 0; i < thinkLines.length; i++) {
-              if (i === 0 && isFirstInChain)
-                itemLines.push(
-                  C.deepseek + "●  " + R + C.dim + thinkLines[i] + R,
-                );
+            const thLines = wrapText(item.thinking, limit - 4);
+            for (let i = 0; i < thLines.length; i++) {
+              if (i === 0)
+                itemLines.push(C.think + "  ┆ " + R + C.think + thLines[i] + R);
               else
-                itemLines.push(C.dim + "│  " + R + C.dim + thinkLines[i] + R);
+                itemLines.push(C.think + "  ┆ " + R + C.think + thLines[i] + R);
             }
           } else {
-            const endTime = item._thinkingEndTime || Date.now();
+            const endT = item._thinkingEndTime || Date.now();
             const elapsed = item._thinkingStartTime
-              ? Math.round((endTime - item._thinkingStartTime) / 1000)
-              : 0;
-            const timeStr = elapsed > 0 ? ` for ${elapsed}s` : "";
-            const prevDeepseek2 = logItems
-              .slice(0, idx)
-              .reverse()
-              .find((prev) => prev.type === "deepseek");
-            const isFirstInChain = !prevDeepseek2?.thinking;
-            if (isFirstInChain)
-              itemLines.push(
-                C.deepseek + "●  " + R + C.dim + "thought" + timeStr + " ▸" + R,
-              );
-            else itemLines.push(C.dim + "thought" + timeStr + " ▸" + R);
+              ? Math.round((endT - item._thinkingStartTime) / 1000) : 0;
+            const label = elapsed > 0 ? `thought ${elapsed}s` : "thought";
+            itemLines.push(C.dimmer + "  ┆ " + C.think + "\x1b[3m" + label + " ▸" + R);
           }
         }
+
         if (item.text) {
           const rendered = renderMd(item.text);
+          const hasThink = !!item.thinking;
           for (let i = 0; i < rendered.length; i++) {
-            if (!item.thinking) {
-              if (i === 0) itemLines.push(C.deepseek + "●  " + R + rendered[i]);
-              else itemLines.push(" ".repeat(3) + rendered[i]);
-            } else {
-              itemLines.push(C.dim + "│  " + R + rendered[i]);
-            }
+            if (i === 0 && !hasThink)
+              itemLines.push(C.accentB + "  ● " + R + rendered[i]);
+            else if (i === 0 && hasThink)
+              itemLines.push("    " + rendered[i]);
+            else
+              itemLines.push("    " + rendered[i]);
           }
+        } else if (item.thinking && !item.text && !item.spinning) {
+          // finished thinking, no response yet (tool call) — nothing extra needed
         }
       }
+
     } else if (item.type === "tool") {
-      if (item.status === "executing")
+      if (item.status === "executing") {
         itemLines.push(
-          C.dim +
-          "│ " +
-          FRAMES[spinFrame % FRAMES.length] +
-          ` executing ${item.name}...` +
-          R,
+          C.dimmer + "  " + FRAMES[spinFrame % FRAMES.length] + " " +
+          C.tool + item.name + R + C.dimmer + " …" + R
         );
-      else if (item.expanded) {
-        itemLines.push(C.dim + "│ " + R + C.dim + item.name + " ▾" + R);
+      } else if (item.expanded) {
+        itemLines.push(C.tool + "  ⊟ " + R + C.muted + item.name + R);
         if (item.result) {
-          const resultLines = item.result.toString().split("\n");
-          const maxLines = Math.min(50, resultLines.length);
-          for (let i = 0; i < maxLines; i++)
-            itemLines.push(C.dim + "│ " + R + C.dim + resultLines[i] + R);
-          if (resultLines.length > maxLines)
-            itemLines.push(
-              C.dim +
-              "│ " +
-              R +
-              C.dim +
-              `... and ${resultLines.length - maxLines} more lines.` +
-              R,
-            );
+          const rLines = item.result.toString().split("\n");
+          const maxShow = Math.min(50, rLines.length);
+          for (let i = 0; i < maxShow; i++)
+            itemLines.push(C.dimmer + "  │ " + R + C.dim + rLines[i] + R);
+          if (rLines.length > maxShow)
+            itemLines.push(C.dimmer + "  │ " + R + C.dimmer + `… +${rLines.length - maxShow} lines` + R);
         }
       } else {
-        itemLines.push(C.dim + item.name + " ▸" + R);
+        itemLines.push(C.tool + "  ⊞ " + R + C.dim + item.name + R + C.dimmer + " ▸" + R);
       }
+
     } else if (item.type === "separator") {
       itemLines.push("");
     } else if (item.type === "divider") {
-      const width = chat.width ? chat.width - 4 : (scr.width || 80) - 4;
-      itemLines.push(C.dim + "─".repeat(Math.max(10, width)) + R);
+      const w = Math.max(10, (chat.width || scr.width || 80) - 8);
+      itemLines.push("   " + C.sep + "─".repeat(w) + R);
     } else if (item.type === "error") {
-      itemLines.push(C.red + "error  " + R + C.dim + item.message + R);
+      itemLines.push(C.err + "  ✕ " + R + C.muted + item.message + R);
     }
-    for (const l of itemLines) {
-      lines.push(l);
-      lineToItem.push(item);
-    }
+
+    for (const l of itemLines) { lines.push(l); lineToItem.push(item); }
   }
+
   chat.setContent(lines.join("\n"));
   chat.setScrollPerc(100);
   scr.render();
 }
 
 chat.on("click", (data) => {
-  const clickY = data.y - (chat.atop + chat.itop) + chat.childBase;
-  if (clickY >= 0 && clickY < lineToItem.length) {
-    const item = lineToItem[clickY];
-    if (item && item.type === "tool" && item.status === "completed") {
-      item.expanded = !item.expanded;
-      renderLog();
-    } else if (item && item.type === "deepseek" && item.thinking) {
-      item.expanded = !item.expanded;
-      renderLog();
-    }
+  const y = data.y - (chat.atop + chat.itop) + chat.childBase;
+  if (y < 0 || y >= lineToItem.length) return;
+  const item = lineToItem[y];
+  if (item?.type === "tool" && item.status === "completed") {
+    item.expanded = !item.expanded; renderLog();
+  } else if (item?.type === "deepseek" && item.thinking) {
+    item.expanded = !item.expanded; renderLog();
   }
 });
 
 // ── chat history overlay ──────────────────────────────────────────────────────
 function showChatHistory() {
-  const sessions = getSessions();
-  if (sessions.length === 0) return;
+  const fs = require('fs');
+  try {
+    const sessions = getSessions();
+    if (!sessions.length) {
+      fs.appendFileSync('/tmp/deepseek-cli-debug.log', `[showChatHistory] No sessions found at ${new Date().toISOString()}\n`);
+      return;
+    }
+    fs.appendFileSync('/tmp/deepseek-cli-debug.log', `[showChatHistory] Found ${sessions.length} sessions\n`);
 
-  const overlay = blessed.box({
-    top: "center",
-    left: "center",
-    width: "80%",
-    height: "80%",
-    border: { type: "line" },
-    style: { border: { fg: "white" }, bg: "black" },
-    label: " Chat History (Enter to select, Esc to cancel) ",
-    keys: true,
-    vi: true,
-    alwaysScroll: true,
-    scrollable: true,
-  });
+    const overlay = blessed.box({
+      top: "center", left: "center",
+      width: "70%", height: "70%",
+      border: { type: "line" },
+      style: { border: { fg: "#3a3a3a" }, bg: "default" },
+      label: " sessions  esc to close ",
+      keys: true, vi: true,
+      alwaysScroll: true, scrollable: true,
+    });
 
-  const list = blessed.list({
+    const list = blessed.list({
     parent: overlay,
-    top: 1,
-    left: 1,
-    right: 1,
-    bottom: 1,
-    keys: true,
-    vi: true,
-    mouse: true,
-    style: { selected: { bg: "blue", fg: "white" }, item: { fg: "white" } },
-    items: sessions.map((s) => {
-      const date = new Date(s.updated_at).toLocaleDateString();
-      return `${s.title} (${date})`;
+    top: 1, left: 1, right: 1, bottom: 1,
+    keys: true, vi: true, mouse: true,
+    style: {
+      selected: { fg: "#52c4c4", bg: "default", bold: true },
+      item: { fg: "#888888" },
+    },
+    items: sessions.map(s => {
+      const date = new Date(s.updated_at).toLocaleDateString("en-GB", { day: "2-digit", month: "short" });
+      return `  ${date}  ${s.title}`;
     }),
   });
 
-  scr.append(overlay);
-  list.focus();
-  scr.render();
-
-  function closeOverlay() {
-    overlay.destroy();
-    input.focus();
+    scr.append(overlay);
+    list.focus();
     scr.render();
+
+    const close = () => { overlay.destroy(); input.focus(); scr.render(); };
+    list.on("select", (_, idx) => { close(); loadSessionIntoTUI(sessions[idx]); });
+    list.key(["escape"], close);
+  } catch (err) {
+    const fs = require('fs');
+    fs.appendFileSync('/tmp/deepseek-cli-debug.log', `[showChatHistory] ERROR: ${err.stack}\n`);
   }
-
-  list.on("select", function (item, index) {
-    const selectedSession = sessions[index];
-    closeOverlay();
-    loadSessionIntoTUI(selectedSession);
-  });
-
-  list.key(["escape"], closeOverlay);
 }
 
 async function loadSessionIntoTUI(session) {
   setCurrentSessionId(session.id);
   logItems.length = 0;
+  setTopBarTitle(session.title);
 
-  const messages = loadSessionMessages(session.id);
-  for (const msg of messages) {
+  for (const msg of loadSessionMessages(session.id)) {
     if (msg.role === "user") {
-      if (logItems.length > 0) {
+      if (logItems.length) {
         logItems.push({ type: "separator" });
         logItems.push({ type: "divider" });
         logItems.push({ type: "separator" });
       }
       logItems.push({ type: "user", text: msg.content });
     } else if (msg.role === "assistant") {
-      logItems.push({
-        type: "deepseek",
-        text: msg.content,
-        thinking: msg.thinking || "",
-        expanded: false,
-        spinning: false,
-      });
+      logItems.push({ type: "deepseek", text: msg.content, thinking: msg.thinking || "", expanded: false, spinning: false });
     } else if (msg.role === "tool_call") {
-      logItems.push({
-        type: "tool",
-        name: msg.content,
-        status: "completed",
-        result: "",
-        expanded: false,
-      });
+      logItems.push({ type: "tool", name: msg.content, status: "completed", result: "", expanded: false });
     } else if (msg.role === "tool_result") {
-      const lastTool = logItems
-        .slice()
-        .reverse()
-        .find((i) => i.type === "tool" && i.name === msg.tool);
-      if (lastTool) lastTool.result = msg.content;
+      const t = logItems.slice().reverse().find(i => i.type === "tool" && i.name === msg.tool);
+      if (t) t.result = msg.content;
     }
   }
   renderLog();
@@ -604,27 +746,27 @@ async function loadSessionIntoTUI(session) {
     try {
       const page = await getPage();
       if (!page.url().includes(session.deepseek_id)) {
-        await page.goto(
-          `https://chat.deepseek.com/a/chat/s/${session.deepseek_id}`,
-        );
-        await page.waitForTimeout(1000);
+        await page.goto(`https://chat.deepseek.com/a/chat/s/${session.deepseek_id}`);
+        await setupInterceptors(page);
       }
-    } catch (e) { }
+    } catch { }
   }
 }
 
 // ── ask ───────────────────────────────────────────────────────────────────────
 let busy = false;
+
 async function ask(prompt) {
   busy = true;
-  const sid = getCurrentSessionId();
-
+  let sid = getCurrentSessionId();
   if (!sid) {
-    const newSession = createSession(prompt.slice(0, 40));
-    sid = newSession.id;
+    const ns = createSession(prompt.slice(0, 40));
+    sid = ns.id;
+    setCurrentSessionId(sid);
+    setTopBarTitle(prompt.slice(0, 60));
   }
 
-  if (logItems.length > 0) {
+  if (logItems.length) {
     logItems.push({ type: "separator" });
     logItems.push({ type: "divider" });
     logItems.push({ type: "separator" });
@@ -635,10 +777,10 @@ async function ask(prompt) {
   let dsItem = { type: "deepseek", text: "", spinning: true };
   logItems.push(dsItem);
   startGlobalSpinner();
+  renderLog();
 
   try {
     const page = await getPage();
-    const count = async () => page.locator(".ds-markdown").count();
     let currentPrompt = `[System Instructions]\n${getSystemPrompt()}\n\n[User Request]\n${prompt}`;
     let isInitial = true;
 
@@ -646,216 +788,133 @@ async function ask(prompt) {
       if (!isInitial) {
         dsItem.spinning = true;
         startGlobalSpinner();
+        renderLog();
       }
+
+      resetStreamState();
+      await setupInterceptors(page);
       await submitPrompt(page, currentPrompt);
-      const before = await count();
-      let appeared = false;
-      for (let i = 0; i < 150; i++) {
-        await page.waitForTimeout(100);
-        if ((await count()) > before) {
-          appeared = true;
+
+      const CHUNK_TIMEOUT = 86400000; // 24 hours - no practical limit
+      const chunkStart = Date.now();
+      while (!_thinkingChunks.length && !_responseChunks.length && !_streamDone) {
+        if (Date.now() - chunkStart > CHUNK_TIMEOUT) {
+          try {
+            await page.reload({ waitUntil: "domcontentloaded" });
+            await setupInterceptors(page);
+            resetStreamState();
+            await submitPrompt(page, currentPrompt);
+            await new Promise(r => setTimeout(r, 2000));
+            if (!_thinkingChunks.length && !_responseChunks.length && !_streamDone)
+              throw new Error("DeepSeek failed to stream after retry — may be rate-limited.");
+          } catch (e) {
+            throw new Error(`No stream data and recovery failed: ${e.message}`);
+          }
           break;
         }
-      }
-      if (!appeared) {
-        try {
-          await page.reload({ waitUntil: 'domcontentloaded' });
-          await page.waitForTimeout(2000);
-          await submitPrompt(page, currentPrompt);
-          let retryAppeared = false;
-          for (let i = 0; i < 150; i++) {
-            await page.waitForTimeout(100);
-            if (await count() > before) { retryAppeared = true; break; }
-          }
-          if (!retryAppeared) throw new Error('DeepSeek failed to respond after retry. Session may be rate-limited.');
-        } catch (retryErr) {
-          throw new Error(`Generation dropped and recovery failed: ${retryErr.message}`);
-        }
+        await new Promise(r => setTimeout(r, 50));
       }
 
-      const bubble = page.locator(".ds-markdown").last();
-      let fullText = "";
-      let started = false;
-      let lastRenderedText = "";
-      let thinkingText = "";
+      const { thinkingText, responseText } = await collectStream(dsItem, renderLog);
+      if (thinkingText) dsItem._thinkingEndTime = Date.now();
 
-      while (true) {
-        await page.waitForTimeout(80);
-        try {
-          fullText = await bubble.evaluate((el) => {
-            const key = Object.keys(el).find(
-              (k) =>
-                k.startsWith("__reactFiber") || k.startsWith("__reactInternal"),
-            );
-            if (!key) return el.textContent;
-            function findRawContent(node, depth = 0) {
-              if (!node || depth > 20) return null;
-              const props = node.memoizedProps;
-              if (props) {
-                if (typeof props.content === "string") return props.content;
-                if (typeof props.text === "string") return props.text;
-                if (typeof props.value === "string") return props.value;
-              }
-              return findRawContent(node.return, depth + 1);
-            }
-            return findRawContent(el[key]) || el.textContent;
-          });
-        } catch { }
+      let parsed = null;
+      const trimmed = responseText.trim();
+      if (trimmed.startsWith("{") || trimmed.startsWith("```"))
+        parsed = extractJSON(responseText);
 
-        if (fullText && fullText.length > 5) {
-          const parsed = extractJSON(fullText);
-          if (
-            parsed &&
-            (parsed.response !== undefined || parsed.tool || parsed._isMulti)
-          )
-            break;
+      // FINAL ANSWER
+      if (!parsed || parsed.response !== undefined) {
+        let finalText;
+        if (parsed?.response !== undefined) {
+          finalText = parsed.response;
+          if (typeof finalText === "object" && finalText !== null)
+            finalText = finalText.message || JSON.stringify(finalText, null, 2);
+          finalText = String(finalText);
+        } else {
+          finalText = responseText;
         }
 
-        if (fullText && fullText !== lastRenderedText) {
-          lastRenderedText = fullText;
-          if (!started) {
-            started = true;
-            dsItem.spinning = false;
-            dsItem.expanded = true;
-            stopGlobalSpinner();
-          }
-          const streamParsed = extractJSON(fullText);
-          if (streamParsed && streamParsed.response) {
-            const jsonStartIdx = fullText.indexOf("{");
-            if (jsonStartIdx > 0)
-              thinkingText = fullText.substring(0, jsonStartIdx).trim();
-            dsItem.thinking = thinkingText || "";
-            dsItem.text = streamParsed.response;
-          } else if (
-            streamParsed &&
-            (streamParsed.tool || streamParsed._isMulti)
-          ) {
-            const jsonStartIdx = fullText.indexOf("{");
-            if (jsonStartIdx > 0)
-              thinkingText = fullText.substring(0, jsonStartIdx).trim();
-            dsItem.thinking = thinkingText || "";
-          } else {
-            if (!fullText.trim().startsWith("{")) {
-              thinkingText = fullText;
-              dsItem.thinking = fullText;
-              if (!dsItem._thinkingStartTime)
-                dsItem._thinkingStartTime = Date.now();
-            }
-          }
-          renderLog();
-        }
-      }
-
-      if (!started) {
-        started = true;
+        dsItem.text = finalText;
+        dsItem.thinking = thinkingText;
         dsItem.spinning = false;
-        stopGlobalSpinner();
-      }
-      if (dsItem._autoCollapseTimer) {
-        clearTimeout(dsItem._autoCollapseTimer);
-        dsItem._autoCollapseTimer = null;
-      }
-
-      const parsed = extractJSON(fullText);
-      if (parsed && parsed.response !== undefined) {
-        let responseText = parsed.response;
-        // Force it to be a string so renderMd() doesn't crash on nested objects
-        if (typeof responseText === 'object' && responseText !== null) {
-          responseText = responseText.message || JSON.stringify(responseText, null, 2);
-        }
-        dsItem.text = String(responseText);
-        if (thinkingText) dsItem.thinking = thinkingText;
-        if (dsItem.thinking) dsItem._thinkingEndTime = Date.now();
-        saveMessage(sid, "assistant", parsed.response, {
-          thinking: thinkingText,
-        });
-      } else if (parsed && (parsed.tool || parsed._isMulti)) {
-        if (thinkingText) dsItem.thinking = thinkingText;
-        if (dsItem.thinking) dsItem._thinkingEndTime = Date.now();
-        dsItem.text = "";
-      } else if (fullText && fullText.trim()) {
-        dsItem.thinking = fullText;
-        dsItem.text = "";
-      } else {
-        dsItem.text = "";
-      }
-
-      renderLog();
-      if (dsItem.thinking) {
-        dsItem.expanded = false;
+        if (dsItem.thinking) dsItem.expanded = false;
         renderLog();
+        saveMessage(sid, "assistant", finalText, { thinking: thinkingText });
+        syncSession(page, sid, prompt);
+        break;
       }
 
-      // Sync Deepseek Chat ID & Title
-      const sess = getSessions().find((s) => s.id === sid);
-      if (sess) {
-        if (!sess.deepseek_id) {
-          const url = page.url();
-          const match = url.match(/\/a\/chat\/s\/([a-zA-Z0-9_-]+)/);
-          if (match) updateSessionDeepseekId(sid, match[1]);
-        }
-        if (sess.title === "New Chat")
-          updateSessionTitle(sid, prompt.slice(0, 40));
-      }
+      // TOOL CALL
+      dsItem.text = "";
+      dsItem.thinking = thinkingText;
+      dsItem.spinning = false;
+      if (dsItem.thinking) { dsItem._thinkingEndTime = Date.now(); dsItem.expanded = false; }
+      renderLog();
+      syncSession(page, sid, prompt);
 
-      if (parsed && parsed._isMulti) {
+      if (parsed._isMulti) {
         const calls = parsed.calls;
-        const MAX_PARALLEL = 8;
-        const batchedCalls = calls.slice(0, MAX_PARALLEL);
-        const toolItems = batchedCalls.map((c) => ({
-          type: "tool",
-          name: c.tool,
-          status: "executing",
-          result: "",
-          expanded: false,
+        const MAX_PAR = 8;
+        const batch = calls.slice(0, MAX_PAR);
+        const toolItems = batch.map(c => ({
+          type: "tool", name: c.tool, status: "executing", result: "", expanded: false,
         }));
         for (const t of toolItems) logItems.push(t);
-        for (const c of batchedCalls)
-          saveMessage(sid, "tool_call", c.tool, { params: c });
-
+        for (const c of batch) saveMessage(sid, "tool_call", c.tool, { params: c });
         startGlobalSpinner();
         renderLog();
-        const results = await Promise.all(batchedCalls.map(async (c) => {
-          const tool = tools[c.tool];
-          if (tool) {
-            try { const out = await tool.execute(c); return safeTruncate(out === undefined || out === null ? '' : String(out)); }
-            catch (err) { return safeTruncate(`Error executing tool: ${err.message}`); }
-          } else {
-            const mcp = require('./mcp/mcp_loader');
-            const isMcp = mcp.getRegistry().some(t => t.name === c.tool);
-            if (isMcp) {
-              try { const out = await mcp.callTool(c.tool, c); return safeTruncate(String(out)); }
-              catch (err) { return safeTruncate(`Error executing MCP tool: ${err.message}`); }
+
+        // Run each tool with a per-tool timeout (30 seconds)
+        const TOOL_TIMEOUT_MS = 30000;
+        const results = await Promise.all(batch.map(async (c) => {
+          const timeoutPromise = new Promise((resolve) =>
+            setTimeout(() => resolve(`[Tool Timeout] ${c.tool} did not complete within ${TOOL_TIMEOUT_MS / 1000}s`), TOOL_TIMEOUT_MS)
+          );
+          const executePromise = (async () => {
+            const t = tools[c.tool];
+            if (t) {
+              try {
+                const res = await t.execute(c);
+                return safeTruncate(String(res ?? ""));
+              } catch (e) {
+                return safeTruncate(`Error: ${e.message}`);
+              }
             }
-            return safeTruncate(`Error: Tool '${c.tool}' not found.`);
-          }
+            const mcp = require("./mcp/mcp_loader");
+            const isMcp = mcp.getRegistry().some(x => x.name === c.tool);
+            if (isMcp) {
+              try {
+                const res = await mcp.callTool(c.tool, c);
+                return safeTruncate(String(res ?? ""));
+              } catch (e) {
+                return safeTruncate(`MCP error: ${e.message}`);
+              }
+            }
+            return `Error: tool '${c.tool}' not found.`;
+          })();
+          return Promise.race([executePromise, timeoutPromise]);
         }));
 
         results.forEach((res, i) => {
           toolItems[i].status = "completed";
           toolItems[i].result = res;
-          saveMessage(sid, "tool_result", res, { tool: batchedCalls[i].tool });
+          saveMessage(sid, "tool_result", res, { tool: batch[i].tool });
         });
         stopGlobalSpinner();
         renderLog();
 
-        const combined = results
-          .map((res, i) => `[Tool Output for ${batchedCalls[i].tool}]\n${res}`)
-          .join("\n\n");
-        const overflowNote =
-          calls.length > MAX_PARALLEL
-            ? `\n\nNote: ${calls.length - MAX_PARALLEL} additional call(s) were truncated. Issue them in the next turn if still needed.`
-            : "";
-        currentPrompt = `${combined}${overflowNote}${FORMAT_REMINDER}`;
+        const combined = results.map((r, i) => `[Tool Output for ${batch[i].tool}]\n${r}`).join("\n\n");
+        const overflow = calls.length > MAX_PAR
+          ? `\n\nNote: ${calls.length - MAX_PAR} call(s) truncated — issue them next turn if needed.` : "";
+        currentPrompt = `${combined}${overflow}${FORMAT_REMINDER}`;
         isInitial = false;
         dsItem = { type: "deepseek", text: "", spinning: true };
         logItems.push(dsItem);
-      } else if (parsed && parsed.tool) {
+        renderLog();
+      } else if (parsed.tool) {
         const toolName = parsed.tool;
-        // Cleanly extract all parameters using destructuring 
-        // (Our normalizer guarantees all params are flat on the root object now)
-        const { tool, ...toolParams } = parsed;
-
+        const { tool: _, ...toolParams } = parsed;
         const toolItem = {
           type: "tool",
           name: toolName,
@@ -865,61 +924,82 @@ async function ask(prompt) {
         };
         logItems.push(toolItem);
         saveMessage(sid, "tool_call", toolName, { params: toolParams });
-
         startGlobalSpinner();
-        const localTool = tools[toolName];
-        let toolResult = '';
+        renderLog();
 
+        let toolResult = "";
+        const localTool = tools[toolName];
         if (localTool) {
           try {
             toolResult = await localTool.execute(toolParams);
-          } catch (err) {
-            toolResult = `[Tool Execution Failed]\nTool: ${toolName}\nError: ${err.message}\n\n(Analyze this error and decide your next step. You MUST reply in valid JSON format.)`;
+          } catch (e) {
+            toolResult = `[Tool Failed]\n${toolName}: ${e.message}\n\n(You MUST reply in valid JSON.)`;
           }
         } else {
-          // MCP ROUTER
-          const mcp = require('./mcp/mcp_loader'); // Ensure this path is correct!
-          const isMcp = mcp.getRegistry().some(t => t.name === toolName);
+          const mcp = require("./mcp/mcp_loader");
+          const isMcp = mcp.getRegistry().some((x) => x.name === toolName);
           if (isMcp) {
             try {
               toolResult = await mcp.callTool(toolName, toolParams);
-            } catch (err) {
-              toolResult = `[MCP Tool Execution Failed]\nTool: ${toolName}\nError: ${err.message}\n\n(Analyze this error and decide your next step. You MUST reply in valid JSON format.)`;
+            } catch (e) {
+              toolResult = `[MCP Failed]\n${toolName}: ${e.message}\n\n(You MUST reply in valid JSON.)`;
             }
           } else {
-            toolResult = `Error: Tool '${toolName}' not found locally or in MCP registry.`;
+            toolResult = `Error: tool '${toolName}' not found locally or in MCP.`;
           }
         }
 
-        toolResult = safeTruncate(toolResult);
+        toolResult = safeTruncate(String(toolResult));
         toolItem.status = "completed";
         toolItem.result = toolResult;
         saveMessage(sid, "tool_result", toolResult, { tool: toolName });
-
         stopGlobalSpinner();
+        renderLog();
 
-        // CRITICAL: Notice we use `toolResult` here, NOT `combined` or `overflowNote`
+        // Wait a moment for the UI to become responsive again
+        await new Promise(r => setTimeout(r, 100));
+
+        // Prepare the next prompt
         currentPrompt = `[Tool Output for ${toolName}]\n${toolResult}${FORMAT_REMINDER}`;
-
         isInitial = false;
+
+        // Create new dsItem (spinner will be started by loop)
         dsItem = { type: "deepseek", text: "", spinning: true };
         logItems.push(dsItem);
+        renderLog();
+
       } else {
+        // parsed something weird — treat as plain text
+        dsItem.text = responseText;
+        renderLog();
+        saveMessage(sid, "assistant", responseText, { thinking: thinkingText });
         break;
       }
     }
   } catch (e) {
-    if (dsItem && dsItem.spinning) {
-      dsItem.spinning = false;
-      stopGlobalSpinner();
-    }
+    if (dsItem?.spinning) { dsItem.spinning = false; stopGlobalSpinner(); }
     logItems.push({ type: "separator" });
     logItems.push({ type: "error", message: e.message });
     renderLog();
   }
+
   busy = false;
   input.focus();
   scr.render();
+}
+
+function syncSession(page, sid, prompt) {
+  const sess = getSessions().find(s => s.id === sid);
+  if (!sess) return;
+  if (!sess.deepseek_id) {
+    const m = page.url().match(/\/a\/chat\/s\/([a-zA-Z0-9_-]+)/);
+    if (m) updateSessionDeepseekId(sid, m[1]);
+  }
+  if (sess.title === "New Chat") {
+    const title = prompt.slice(0, 40);
+    updateSessionTitle(sid, title);
+    setTopBarTitle(title);
+  }
 }
 
 // ── key bindings ──────────────────────────────────────────────────────────────
@@ -937,24 +1017,19 @@ input.key("enter", () => {
   input.clearValue();
   scr.render();
 
-  if (val === "/chat") {
-    showChatHistory();
-    return;
-  }
+  if (val === "/chat") { showChatHistory(); return; }
 
   if (val === "/new") {
     logItems.length = 0;
     setCurrentSessionId(null);
+    setTopBarTitle("new session");
     renderLog();
-
-    // Force focus back to the input box after the heavy screen wipe
     input.focus();
     scr.render();
-
-    getPage().then(async (page) => {
+    getPage().then(async page => {
       try {
         await page.goto("https://chat.deepseek.com/");
-        await page.waitForTimeout(500);
+        await setupInterceptors(page);
       } catch { }
     });
     return;
@@ -967,17 +1042,9 @@ scr.key(["C-c"], () => process.exit(0));
 
 process.on("SIGINT", async () => {
   if (_page) {
-    try {
-      await _page
-        .context()
-        .browser()
-        .close()
-        .catch(() => { });
-    } catch { }
+    try { await _page.context().browser().close().catch(() => { }); } catch { }
   }
-  try {
-    execSync('pkill -f "remote-debugging-port=9222"', { stdio: "ignore" });
-  } catch { }
+  try { execSync('pkill -f "remote-debugging-port=9222"', { stdio: "ignore" }); } catch { }
   process.exit(0);
 });
 
@@ -987,6 +1054,7 @@ if (require.main === module) {
   launchBrowser();
   getPage().catch(() => { });
   input.focus();
+  setTopBarTitle("deepseek");
   scr.render();
 } else {
   module.exports = { renderMd, wrapText, inline, C, R };

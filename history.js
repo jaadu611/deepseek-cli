@@ -1,8 +1,8 @@
 const fs = require('fs');
 const path = require('path');
 
-const HISTORY_DIR = path.join(process.cwd(), 'sessions');
-const SESSIONS_DIR = path.join(HISTORY_DIR, 'chats');
+const HISTORY_DIR = path.join(process.cwd(), '.ds_config', 'sessions');
+const SESSIONS_DIR = path.join(HISTORY_DIR);  // flat: jsonl files go directly in sessions dir
 const SESSIONS_INDEX = path.join(HISTORY_DIR, 'sessions.json');
 const GITIGNORE_PATH = path.join(process.cwd(), '.gitignore');
 
@@ -15,8 +15,8 @@ function initHistory() {
   
   if (fs.existsSync(GITIGNORE_PATH)) {
     const ignoreContent = fs.readFileSync(GITIGNORE_PATH, 'utf8');
-    if (!ignoreContent.includes('sessions/')) {
-      fs.appendFileSync(GITIGNORE_PATH, '\n# Deepseek CLI local history\nsessions/\n');
+    if (!ignoreContent.includes('.ds_config/')) {
+      fs.appendFileSync(GITIGNORE_PATH, '\n# Deepseek CLI local history\n.ds_config/\n');
     }
   }
 }

@@ -13,45 +13,49 @@ for (const file of files) {
 
 // Convert a parsed JSON object into a normalized tool call structure.
 function normalizeToolCall(obj) {
-  if (!obj || typeof obj !== 'object') return obj;
-  if (obj.tool) return obj;
-  if (obj.response !== undefined) return obj;
-  
-  if (Array.isArray(obj.tools)) {
-    const calls = obj.tools
-      .filter(t => t && typeof t === 'object')
-      .map(t => {
-        if (t.name) {
-          const { name, ...rest } = t;
-          return { tool: name, ...rest };
-        }
-        for (const key of Object.keys(t)) {
-          if (tools[key] && typeof t[key] === 'object' && t[key] !== null) {
-            return { tool: key, ...t[key] };
+  try {
+    if (!obj || typeof obj !== 'object') return obj;
+    if (obj.tool) return obj;
+    if (obj.response !== undefined) return obj;
+
+    if (Array.isArray(obj.tools)) {
+      const calls = obj.tools
+        .filter(t => t && typeof t === 'object')
+        .map(t => {
+          if (t.name) {
+            const { name, ...rest } = t;
+            return { tool: name, ...rest };
           }
-        }
-        return null;
-      })
-      .filter(Boolean);
-    if (calls.length > 0) {
-      return { _isMulti: true, calls };
+          for (const key of Object.keys(t)) {
+            if (tools[key] && typeof t[key] === 'object' && t[key] !== null) {
+              return { tool: key, ...t[key] };
+            }
+          }
+          return null;
+        })
+        .filter(Boolean);
+      if (calls.length > 0) {
+        return { _isMulti: true, calls };
+      }
     }
-  }
-  
-  if (obj.name && obj.parameters && typeof obj.parameters === 'object') {
-    const result = { ...obj.parameters };
-    result.tool = obj.name;
-    return result;
-  }
-  
-  for (const key of Object.keys(obj)) {
-    if (tools[key] && typeof obj[key] === 'object' && obj[key] !== null) {
-      const params = obj[key];
-      params.tool = key;
-      return params;
+
+    if (obj.name && obj.parameters && typeof obj.parameters === 'object') {
+      const result = { ...obj.parameters };
+      result.tool = obj.name;
+      return result;
     }
+
+    for (const key of Object.keys(obj)) {
+      if (tools[key] && typeof obj[key] === 'object' && obj[key] !== null) {
+        const params = obj[key];
+        params.tool = key;
+        return params;
+      }
+    }
+    return obj;
+  } catch (err) {
+    return obj;
   }
-  return obj;
 }
 
 function getSystemPrompt() {
@@ -67,45 +71,100 @@ function getSystemPrompt() {
     if (fs.existsSync(planPath)) {
       activePlanContext = `\n\n[Active Implementation Plan]:\n${fs.readFileSync(planPath, 'utf8')}`;
     }
-  } catch {}
+  } catch { }
 
   try {
     const taskPath = path.join(process.cwd(), 'task.md');
     if (fs.existsSync(taskPath)) {
       activeTaskContext = `\n\n[Active Checklist/Tasks]:\n${fs.readFileSync(taskPath, 'utf8')}`;
     }
-  } catch {}
+  } catch { }
 
-  return `You are an elite, autonomous Software Architect and Execution Engine. You operate on a strict "Think First, Execute Second" paradigm. You do not guess; you plan, reason, and then act.
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Drop this function body into tools.js, replacing the existing getSystemPrompt.
+  // The function signature and the toolDescriptions / activePlanContext /
+  // activeTaskContext variables stay exactly as they are — only the template
+  // string changes.
+  // ─────────────────────────────────────────────────────────────────────────────
 
-### THE GOLDEN RULE: STRICT JSON ONLY
-Your output is parsed by a strict machine pipeline. ANY output that is not pure, valid JSON will cause a fatal system crash.
-- NEVER output plain text, apologies, or conversational filler.
-- ALWAYS output exactly ONE of the allowed JSON shapes.
+  return `You are an elite autonomous Software Architect and Execution Engine.
 
-### ALLOWED OUTPUT SHAPES
-1. Single Tool Call: {"tool": "name", "param1": "value1"}
-2. Parallel Tool Calls: {"tools": [{"name": "t1", "p": "v"}, {"name": "t2", "p": "v"}]}
-3. Final Response: {"response": "Markdown formatted final answer or status report."}
+════════════════════════════════════════════════════════
+ OUTPUT RULES  — read these first, follow them always
+════════════════════════════════════════════════════════
 
-### CORE DIRECTIVE 1: MANDATORY PLANNING (The "Think First" Protocol)
-For ANY task that is even slightly complex (requiring more than one tool call, architectural decisions, or debugging), you MUST use your workspace files before taking action:
-1. **Analyze & Architect**: Use \`write_file\` or \`patch_file\` to update \`implementation_plan.md\` with your reasoning, architecture, and strategy. If the problem is highly complex, use \`search_tool_registry\` to find and use the \`sequentialthinking\` tool to break down the logic step-by-step before writing the plan.
-2. **Task Breakdown**: Update \`task.md\` with a granular, step-by-step checklist of what needs to be done.
-3. **Execution Loop**: Execute the first step via tool calls. Once a step succeeds, update \`task.md\` to check it off. If it fails, update \`implementation_plan.md\` with your debugging hypothesis and try a new approach.
-4. **Completion**: Only return a {"response": "..."} when the \`task.md\` checklist is fully complete or you are reporting a hard blocker.
+RULE 1 — PLAIN TEXT for answers, explanations, and reports
+  Use plain Markdown whenever you are:
+  • Answering a question
+  • Summarising or explaining something
+  • Reporting the result of completed work
+  • Asking the user a clarifying question
 
-### CORE DIRECTIVE 2: TOOL REGISTRY & REASONING
-- If you need a capability not in your Core Tools (e.g., web scraping, deep sequential reasoning, database queries), call \`search_tool_registry\` to find the MCP tool, read its schema, and use it.
-- Use \`sequentialthinking\` (via registry) for deep debugging, complex logic mapping, or architectural brainstorming. Channel your "thoughts" into this tool or your markdown files, NOT the chat stream.
+RULE 2 — JSON ONLY for tool calls, nothing else
+  When you need to invoke a tool, output EXACTLY ONE JSON object.
+  No prose before it. No prose after it. No markdown fences.
+  The moment you write a "{" the pipeline assumes it is a tool call.
 
-### CORE DIRECTIVE 3: EXECUTION STRATEGY
-- Call dependent tools sequentially, inspecting outputs before proceeding.
-- Batch independent tools into the \`tools\` array for parallel execution.
-- Use non-interactive flags (e.g., \`-y\`, \`--noconfirm\`) for shell commands.
-- If a tool fails, analyze the error, document your hypothesis in \`implementation_plan.md\`, and attempt a workaround. Do not offer unsolicited advice to the user.
+  Allowed JSON shapes:
 
-### Available Core Tools:
+  Single tool:
+    {"tool": "tool_name", "param1": "value1", "param2": "value2"}
+
+  Parallel independent tools (run at the same time):
+    {"tools": [{"name": "tool_a", "p1": "v1"}, {"name": "tool_b", "p1": "v2"}]}
+
+  ❌ NEVER mix prose and JSON in the same response.
+  ❌ NEVER wrap JSON in markdown code fences.
+
+RULE 3 — ONE thing per response
+  Either answer in plain text OR call a tool. Never both.
+
+════════════════════════════════════════════════════════
+ WORKFLOW
+════════════════════════════════════════════════════════
+
+Simple tasks (one-shot, no tools needed):
+  → Answer immediately in plain text.
+
+Tasks requiring tools:
+  1. If the task is non-trivial, write an implementation_plan.md and task.md
+     using write_file before doing anything else.
+  2. Execute the first step as a JSON tool call.
+  3. When you receive the tool result, decide:
+       • Need another tool?  → JSON tool call (update task.md first if helpful)
+       • Done?               → plain text summary of what was accomplished
+  4. Never call a tool and explain yourself in the same response — think
+     silently (use your <think> block or implementation_plan.md) then act.
+
+════════════════════════════════════════════════════════
+ EXECUTION PRINCIPLES
+════════════════════════════════════════════════════════
+
+• Dependent steps → sequential tool calls (inspect output before next call).
+• Independent steps → batch into the "tools" parallel array.
+• Shell commands → always use non-interactive flags (-y, --yes, --noconfirm).
+• On failure → update implementation_plan.md with your diagnosis, try a new
+  approach. Do not surface debugging noise to the user unless they ask.
+• If you need a capability not in your core tools, call search_tool_registry
+  to find the right MCP tool.
+• For deep logic problems or complex debugging, find and use the
+  sequentialthinking MCP tool — channel all reasoning there, not the chat.
+
+════════════════════════════════════════════════════════
+ DECISION TREE (when you receive a message)
+════════════════════════════════════════════════════════
+
+Does the task require reading/writing files, running commands, or calling APIs?
+  NO  → Answer in plain Markdown. Stop.
+  YES → Do you have enough information to act?
+          NO  → Ask one clarifying question in plain text. Stop.
+          YES → Is it complex enough to warrant a plan?
+                  YES → write_file tool call for implementation_plan.md + task.md
+                  NO  → Proceed directly with the first tool call.
+
+════════════════════════════════════════════════════════
+ AVAILABLE CORE TOOLS
+════════════════════════════════════════════════════════
 ${toolDescriptions}
 ${activePlanContext}${activeTaskContext}`;
 }
