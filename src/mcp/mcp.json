@@ -14,13 +14,6 @@
         "@modelcontextprotocol/server-fetch"
       ]
     },
-    "git": {
-      "command": "npx",
-      "args": [
-        "-y",
-        "mcp-server-git"
-      ]
-    },
     "playwright": {
       "command": "npx",
       "args": [

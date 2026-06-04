@@ -8,3 +8,4 @@ scratch/
 workflows/
 installed_servers/
 .playwright-mcp/
+src/mcp/mcp.json
