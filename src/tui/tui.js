@@ -87,134 +87,124 @@ function formatToolParams(name, params) {
   } else if (name === "list_directory" || name === "list_dir") {
     if (basename) parts.push(`path: ${basename}`);
     else if (rawPath === "/" || rawPath === "." || rawPath === "./") parts.push(`path: ${rawPath}`);
-  } else if (name === "manage_task" || name === "manage_plan") {
-    const action = params.Action || params.action || "";
+  } else if (name === "scroll_chat" || name === "scroll_chat_to_bottom") {
+    const action = params.action;
     if (action) parts.push(`action: ${action}`);
-    const taskId = params.TaskId || params.task_id || "";
+  } else if (name === "manage_task" || name === "manage_plan") {
+    const taskId = params.taskId || params.planId;
     if (taskId) parts.push(`id: ${taskId}`);
-  } else {
-    // Generic fallback for any other tools
-    const keys = Object.keys(params).filter(k => typeof params[k] === "string" || typeof params[k] === "number" || typeof params[k] === "boolean");
-    for (const k of keys.slice(0, 2)) {
-      const val = String(params[k]);
-      const displayVal = val.length > 20 ? val.substring(0, 17) + "..." : val;
+  }
+
+  if (parts.length === 0) {
+    const keys = Object.keys(params).slice(0, 2);
+    for (const k of keys) {
+      const val = params[k];
+      const displayVal = typeof val === "string" && val.length > 20 ? val.substring(0, 17) + "..." : val;
       parts.push(`${k}: ${displayVal}`);
     }
   }
-
   return parts.length ? `(${parts.join(", ")})` : "";
 }
 
-// ── inline markdown (single-line) ────────────────────────────────────────────
-function inline(s) {
-  const b = C.body;
-  return s
-    .replace(/`([^`]+)`/g, C.code + "$1" + R + b)
-    .replace(/\*\*\*([^*]+)\*\*\*/g, "\x1b[1;3m" + C.bold + "$1" + R + b)
-    .replace(/\*\*([^*]+)\*\*/g, "\x1b[1m" + C.bold + "$1" + R + b)
-    .replace(/\*([^*\n]+)\*/g, "\x1b[3m" + C.italic + "$1" + R + b)
-    .replace(/~~([^~]+)~~/g, "\x1b[9m" + C.dim + "$1" + R + b)
-    .replace(/__([^_]+)__/g, "\x1b[1m" + C.bold + "$1" + R + b)
-    .replace(/(?<!\w)_([^_\n]+?)_(?!\w)/g, "\x1b[3m" + C.italic + "$1" + R + b);
+// ── markdown inline render ────────────────────────────────────────────────────
+function inline(str) {
+  if (!str) return "";
+  return str
+    .replace(/\*\*([^*]+)\*\*/g, `${C.bold}$1${R}${C.body}`)
+    .replace(/\*([^*]+)\*/g, `${C.italic}$1${R}${C.body}`)
+    .replace(/`([^`]+)`/g, `${C.code}$1${R}${C.body}`);
 }
 
-// ── block markdown renderer ───────────────────────────────────────────────────
 function renderMd(raw) {
+  if (!raw) return [""];
+  const lines = [];
+  let inCode = false;
+  let codeLang = "";
+  let codeLines = [];
   const width = chat && chat.width ? chat.width : scr.width || 80;
-  const limit = Math.max(20, width - 7);
-  const lines = raw.trim().split("\n");
-  const out = [];
+  const limit = width - 8;
 
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-
-    const fence = line.match(/^```(\w*)/);
-    if (fence) {
-      const lang = fence[1] || "text";
-      const codeLines = [];
-      i++;
-      while (i < lines.length && !lines[i].startsWith("```")) {
-        codeLines.push(lines[i]);
-        i++;
+  const flushCode = () => {
+    if (codeLines.length) {
+      const langLabel = codeLang ? ` ${codeLang} ` : " ";
+      const bar = "─".repeat(Math.max(0, limit - langLabel.length - 2));
+      lines.push(C.codeBorder + "╭" + langLabel + bar + "╮" + R);
+      for (const l of codeLines) {
+        lines.push(C.codeBorder + "│ " + R + C.code + l + R + C.codeBorder + " │" + R);
       }
-      const inner = Math.min(Math.max(...codeLines.map((l) => l.length), 4), limit - 4);
-      const langLabel = lang ? ` ${lang} ` : " text ";
-      const bar = "─".repeat(Math.max(0, inner - langLabel.length));
-      out.push(C.codeBorder + "╭" + langLabel + bar + "╮" + R);
-      for (const cl of codeLines) {
-        const content = cl.length > inner ? cl.slice(0, inner - 1) + "…" : cl;
-        out.push(
-          C.codeBorder +
-            "│" +
-            R +
-            " " +
-            C.code +
-            content.padEnd(inner - 1) +
-            R +
-            " " +
-            C.codeBorder +
-            "│" +
-            R
-        );
+      const inner = Math.min(limit, Math.max(...codeLines.map(l => l.length)));
+      lines.push(C.codeBorder + "╰" + "─".repeat(inner) + "╯" + R);
+      codeLines = [];
+      codeLang = "";
+    }
+  };
+
+  const addLine = (line) => {
+    if (inCode) {
+      codeLines.push(line);
+    } else {
+      lines.push(C.body + inline(line) + R);
+    }
+  };
+
+  const rawLines = raw.split("\n");
+  for (let line of rawLines) {
+    if (line.startsWith("```")) {
+      flushCode();
+      inCode = !inCode;
+      if (inCode) codeLang = line.slice(3).trim();
+      continue;
+    }
+    if (inCode) {
+      codeLines.push(line);
+      continue;
+    }
+    if (line.startsWith("# ")) {
+      addLine(C.accent + "▸ " + R + C.bold + line.slice(2) + R);
+      lines.push("");
+      continue;
+    }
+    if (line.startsWith("## ")) {
+      addLine(C.accent + "  ▸ " + R + C.bold + line.slice(3) + R);
+      lines.push("");
+      continue;
+    }
+    if (line.startsWith("- ") || line.startsWith("* ")) {
+      const wrapped = wrapText(line.slice(2), limit - 4);
+      for (let j = 0; j < wrapped.length; j++) {
+        if (j === 0) addLine(C.accentB + "  ● " + R + wrapped[0]);
+        else addLine("    " + wrapped[j]);
       }
-      out.push(C.codeBorder + "╰" + "─".repeat(inner) + "╯" + R);
       continue;
     }
-
-    const hm = line.match(/^(#{1,3}) (.*)/);
-    if (hm) {
-      if (out.length && out[out.length - 1] !== "") out.push("");
-      const level = hm[1].length;
-      const prefix = level === 1 ? "§ " : level === 2 ? "· " : "  ";
-      for (const wl of wrapText(hm[2], limit))
-        out.push(C.accent + prefix + R + "\x1b[1m" + C.bold + inline(wl) + R);
-      out.push("");
+    if (/^\d+\. /.test(line)) {
+      const match = line.match(/^(\d+)\. /);
+      const num = match[1];
+      const wrapped = wrapText(line.slice(num.length + 2), limit - 6);
+      for (let j = 0; j < wrapped.length; j++) {
+        if (j === 0) addLine(C.muted + "  " + num + ". " + R + wrapped[0]);
+        else addLine("       " + wrapped[j]);
+      }
       continue;
     }
-
-    if (/^(-{3,}|\*{3,}|_{3,})$/.test(line.trim())) {
-      out.push(C.sep + "─".repeat(Math.min(55, limit)) + R);
+    if (line.startsWith("> ")) {
+      const wrapped = wrapText(line.slice(2), limit - 4);
+      for (let j = 0; j < wrapped.length; j++) {
+        addLine(C.accentB + " ▎ " + R + C.italic + wrapped[j]);
+      }
       continue;
     }
-
-    const ul = line.match(/^[ \t]*[-*+] (.*)/);
-    if (ul) {
-      const wrapped = wrapText(ul[1], limit - 4);
-      out.push(C.accentB + "  ▸ " + R + C.body + inline(wrapped[0]) + R);
-      for (let j = 1; j < wrapped.length; j++)
-        out.push("    " + C.body + inline(wrapped[j]) + R);
+    if (line === "") {
+      if (lines.length && lines[lines.length - 1] !== "") lines.push("");
       continue;
     }
-
-    const ol = line.match(/^[ \t]*(\d+)[.)]\s+(.*)/);
-    if (ol) {
-      const wrapped = wrapText(ol[2], limit - 5);
-      out.push(C.muted + "  " + ol[1].padStart(2) + ". " + R + C.body + inline(wrapped[0]) + R);
-      for (let j = 1; j < wrapped.length; j++)
-        out.push("       " + C.body + inline(wrapped[j]) + R);
-      continue;
-    }
-
-    const bq = line.match(/^> (.*)/);
-    if (bq) {
-      for (const wl of wrapText(bq[1], limit - 4))
-        out.push(C.accentB + " ▎ " + R + "\x1b[3m" + C.italic + inline(wl) + R);
-      continue;
-    }
-
-    if (line.trim() === "") {
-      if (out.length && out[out.length - 1] !== "") out.push("");
-      continue;
-    }
-
-    for (const wl of wrapText(line, limit)) out.push(C.body + inline(wl) + R);
+    const wrapped = wrapText(line, limit);
+    for (const wl of wrapped) addLine(wl);
   }
-
-  while (out.length && out[out.length - 1] === "") out.pop();
-  return out;
+  flushCode();
+  return lines;
 }
 
-// ── TUI layout ────────────────────────────────────────────────────────────────
 const scr = blessed.screen({
   smartCSR: true,
   fullUnicode: true,
@@ -253,6 +243,28 @@ const chat = blessed.box({
   style: { bg: "default", fg: "#d2d2d2" },
 });
 
+// Auto-scroll state
+let autoScrollEnabled = true;
+let lastScrollPerc = 0;
+
+chat.on("scroll", () => {
+  const scrollPerc = chat.getScrollPerc();
+  if (scrollPerc !== undefined) {
+    if (scrollPerc < 99 && lastScrollPerc >= 99) {
+      autoScrollEnabled = false;
+    } else if (scrollPerc >= 99 && !autoScrollEnabled) {
+      autoScrollEnabled = true;
+      scrollChatToBottom();
+    }
+    lastScrollPerc = scrollPerc;
+  }
+});
+
+function scrollChatToBottom() {
+  chat.setScrollPerc(100);
+  scr.render();
+}
+
 const inputSep = blessed.line({
   bottom: 3,
   left: 0,
@@ -278,23 +290,21 @@ const input = blessed.textbox({
   border: { type: "line" },
 });
 
-
-
 input.key(["escape"], () => {
   // Ignore escape to prevent default blessed cancellation/lockup behavior
 });
 
-// Enable left/right arrow movement within input field
+// Safe left/right arrow movement within input field
 input.key(["left"], () => {
-  if (input.focused) {
-    input.moveCursor(-1, 0);
+  if (input.focused && input._.cursorX > 0) {
+    input._.cursorX--;
     scr.render();
   }
 });
 
 input.key(["right"], () => {
-  if (input.focused) {
-    input.moveCursor(1, 0);
+  if (input.focused && input._.cursorX < input._.value.length) {
+    input._.cursorX++;
     scr.render();
   }
 });
@@ -401,7 +411,6 @@ function renderLog() {
             }
           }
         } else if (item.type === "tool") {
-          // Note: formatToolParams returns string starting with ( and ending with )
           const displayParams = item.params ? " " + C.dim + formatToolParams(item.name, item.params) + R : "";
 
           if (item.status === "executing") {
@@ -461,6 +470,9 @@ function renderLog() {
 
     chat.setContent(lines.join("\n"));
     scr.render();
+    if (autoScrollEnabled) {
+      scrollChatToBottom();
+    }
   } catch (outerErr) {
     const fs = require('fs');
     fs.appendFileSync('/tmp/deepseek-cli-crash.log', `renderLog outer error: ${outerErr.stack}\n`);
@@ -558,19 +570,12 @@ module.exports = {
   scr,
   topBar,
   chat,
-  inputSep,
   input,
-  C,
-  R,
-  setLogItems(items) {
-    logItems = items;
-  },
-  getLogItems() {
-    return logItems;
-  },
+  inputSep,
   setTopBarTitle,
   scrollDown,
   scrollUp,
+  scrollChatToBottom,
   startGlobalSpinner,
   stopGlobalSpinner,
   renderLog,
@@ -579,4 +584,6 @@ module.exports = {
   wrapText,
   inline,
   refocusInput,
+  setLogItems(items) { logItems = items; },
+  getLogItems() { return logItems; },
 };

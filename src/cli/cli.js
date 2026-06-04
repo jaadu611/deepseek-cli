@@ -302,6 +302,8 @@ async function loadSessionIntoTUI(session) {
     }
   }
   tui.renderLog();
+  // Auto-scroll to bottom after loading session
+  tui.scrollChatToBottom();
 
   const brain = brainRegistry.getActiveBrain();
   if (brain && typeof brain.onSessionLoad === "function") {
@@ -309,9 +311,7 @@ async function loadSessionIntoTUI(session) {
   }
 }
 
-
 function main() {
-  initHistory();
 
   const bootItem = { type: "status", text: "booting agent brain (launching headless browser)..." };
   const logItems = [bootItem];
