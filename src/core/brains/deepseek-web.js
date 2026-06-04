@@ -159,7 +159,7 @@ class DeepSeekWebBrain extends BaseBrain {
       execSync('pgrep -f "remote-debugging-port=9222"', { stdio: "ignore" });
     } catch {
       execSync(
-        'chromium --headless=true --remote-debugging-port=9222 --user-data-dir="$HOME/scraper-profile" &',
+        'chromium --remote-debugging-port=9222 --disable-blink-features=AutomationControlled --user-data-dir="$HOME/scraper-profile" &',
         { shell: true, stdio: "ignore" }
       );
     }
@@ -204,11 +204,14 @@ class DeepSeekWebBrain extends BaseBrain {
       const browser = await chromium.connectOverCDP("http://127.0.0.1:9222");
       const ctx = browser.contexts()[0];
       let page = ctx.pages().find((p) => p.url().includes("chat.deepseek.com"));
+      const { withStealth } = require("playwright-stealth");
       if (!page) {
         page = await ctx.newPage();
+        await withStealth(page);
         await this.setupInterceptors(page);
         page.goto("https://chat.deepseek.com/").catch(() => {});
       } else {
+        await withStealth(page);
         await this.setupInterceptors(page);
       }
       this.page = page;
