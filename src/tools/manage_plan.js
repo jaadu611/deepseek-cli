@@ -20,8 +20,7 @@ module.exports = {
       if (!plan_markdown || typeof plan_markdown !== 'string') {
         return 'Error: Required parameter "plan_markdown" is missing or invalid. You must provide the plan content as a string.';
       }
-      const scratchDir = getScratchPath();
-      const planPath = path.join(scratchDir, 'implementation_plan.md');
+      const planPath = path.join(__dirname, '..', '..', 'implementation_plan.md');
       fs.writeFileSync(planPath, plan_markdown, 'utf8');
       return `Implementation plan updated successfully at ${planPath}`;
     } catch (err) {

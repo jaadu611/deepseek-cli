@@ -172,19 +172,19 @@ function getSystemPrompt(userPrompt) {
         if (file.endsWith('.md')) {
           let content = fs.readFileSync(path.join(workflowsDir, file), 'utf8');
           
-          if (isGlobal) {
-            const firstLine = content.split('\n')[0].trim();
-            if (firstLine.startsWith('trigger:')) {
+          const firstLine = content.split('\n')[0].trim();
+          if (firstLine.startsWith('trigger:')) {
+            if (isGlobal) {
               const trigger = firstLine.replace('trigger:', '').trim().toLowerCase();
               const inDeps = trigger && projectDependencies.toLowerCase().includes(trigger);
               const inPrompt = trigger && userPrompt && userPrompt.toLowerCase().includes(trigger);
               if (!inDeps && !inPrompt) {
                 continue;
               }
-              const lines = content.split('\n');
-              lines.shift();
-              content = lines.join('\n');
             }
+            const lines = content.split('\n');
+            lines.shift();
+            content = lines.join('\n');
           }
           
           rules.push(`[Workflow: ${file}]:\n${content}`);

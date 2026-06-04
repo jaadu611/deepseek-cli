@@ -155,14 +155,32 @@ class DeepSeekWebBrain extends BaseBrain {
   }
 
   launchBrowser() {
-    try {
-      execSync('pgrep -f "remote-debugging-port=9222"', { stdio: "ignore" });
-    } catch {
-      execSync(
-        'chromium --remote-debugging-port=9222 --disable-blink-features=AutomationControlled --user-data-dir="$HOME/scraper-profile" &',
-        { shell: true, stdio: "ignore" }
+    const http = require("http");
+    const req = http.get("http://127.0.0.1:9222/json/version", (res) => {
+      // Connected successfully, browser is already running
+    });
+    req.on("error", () => {
+      // Not running, launch it in background
+      const { spawn } = require("child_process");
+      const path = require("path");
+      const os = require("os");
+      const child = spawn(
+        "chromium",
+        [
+          "--headless=true",
+          "--remote-debugging-port=9222",
+          "--user-data-dir=" + path.join(os.homedir(), "scraper-profile"),
+        ],
+        {
+          detached: true,
+          stdio: "ignore",
+        }
       );
-    }
+      child.unref();
+    });
+    req.setTimeout(500, () => {
+      req.destroy();
+    });
   }
 
   async waitForCDP(port = 9222, timeout = 10000) {
@@ -204,14 +222,11 @@ class DeepSeekWebBrain extends BaseBrain {
       const browser = await chromium.connectOverCDP("http://127.0.0.1:9222");
       const ctx = browser.contexts()[0];
       let page = ctx.pages().find((p) => p.url().includes("chat.deepseek.com"));
-      const { withStealth } = require("playwright-stealth");
       if (!page) {
         page = await ctx.newPage();
-        await withStealth(page);
         await this.setupInterceptors(page);
         page.goto("https://chat.deepseek.com/").catch(() => {});
       } else {
-        await withStealth(page);
         await this.setupInterceptors(page);
       }
       this.page = page;
