@@ -1,9 +1,10 @@
 const fs = require('fs');
 const path = require('path');
+const { getScratchPath } = require('../utils/config');
 
 module.exports = {
   name: "manage_task",
-  description: "Creates or updates the task.md checklist file in the current working directory to track progress on completed, in-progress, and pending tasks.",
+  description: "Creates or updates the task.md checklist file in the ds_config/scratch/ directory to track progress on completed, in-progress, and pending tasks.",
   parameters: {
     type: "object",
     properties: {
@@ -19,8 +20,8 @@ module.exports = {
       if (!task_markdown || typeof task_markdown !== 'string') {
         return 'Error: Required parameter "task_markdown" is missing or invalid. You must provide the task content as a string.';
       }
-      const repoRoot = path.join(__dirname, '..', '..');
-      const taskPath = path.join(repoRoot, 'task.md');
+      const scratchDir = getScratchPath();
+      const taskPath = path.join(scratchDir, 'task.md');
       fs.writeFileSync(taskPath, task_markdown, 'utf8');
       return `Checklist updated successfully at ${taskPath}`;
     } catch (err) {

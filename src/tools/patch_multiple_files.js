@@ -1,9 +1,10 @@
 const fs = require('fs');
 const path = require('path');
+const { getBackupsPath } = require('../utils/config');
 
 module.exports = {
   name: "patch_multiple_files",
-  description: "Applies patches to multiple files atomically. If ANY patch fails, ALL changes are rolled back. Each patch uses line-range replacement. Use this for coordinated refactors across related files.",
+  description: "Applies patches to multiple files atomically. If ANY patch fails, ALL changes are rolled back. Each patch uses line-range replacement. Use this for coordinated refactors across related files. Backups are stored in ds_config/backups/.",
   parameters: {
     type: "object",
     properties: {
@@ -26,7 +27,7 @@ module.exports = {
     required: ["patches"]
   },
   async execute({ patches }) {
-    const backups = [];
+    const backups = []; // each entry: { original, backupPath }
     try {
       // Phase 1: Validate all patches before applying any
       for (const p of patches) {
@@ -44,12 +45,14 @@ module.exports = {
         }
       }
       
-      // Phase 2: Create backups
+      // Phase 2: Create backups in centralized directory
+      const backupDir = getBackupsPath();
       for (const p of patches) {
         const resolved = path.resolve(p.path);
-        const bakPath = resolved + '.bak';
-        fs.writeFileSync(bakPath, fs.readFileSync(resolved, 'utf8'), 'utf8');
-        backups.push({ original: resolved, backup: bakPath });
+        const originalContent = fs.readFileSync(resolved, 'utf8');
+        const backupPath = path.join(backupDir, resolved.replace(/\//g, '_') + '_' + Date.now() + '.bak');
+        fs.writeFileSync(backupPath, originalContent, 'utf8');
+        backups.push({ original: resolved, backupPath });
       }
       
       // Phase 3: Apply all patches
@@ -63,11 +66,11 @@ module.exports = {
         results.push(`✅ ${p.path}: lines ${p.start_line}-${p.end_line}`);
       }
       
-      return `Atomic patch successful:\n${results.join('\n')}`;
+      return `Atomic patch successful:\n${results.join('\n')}\nBackups saved in ${backupDir}`;
     } catch (err) {
       // ROLLBACK on any failure
       for (const b of backups) {
-        try { fs.copyFileSync(b.backup, b.original); } catch {}
+        try { fs.copyFileSync(b.backupPath, b.original); } catch {}
       }
       return `❌ Atomic patch FAILED. All changes rolled back.\nError: ${err.message}`;
     }

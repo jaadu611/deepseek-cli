@@ -1,9 +1,10 @@
 const fs = require('fs');
 const path = require('path');
+const { getBackupsPath } = require('../utils/config');
 
 module.exports = {
   name: "write_file",
-  description: "Writes complete content to a file. USE THIS INSTEAD OF patch_file WHEN: creating new files, rewriting entire files, or making changes larger than 15 lines. Automatically creates parent directories. Creates .bak backup if file exists.",
+  description: "Writes complete content to a file. USE THIS INSTEAD OF patch_file WHEN: creating new files, rewriting entire files, or making changes larger than 15 lines. Automatically creates parent directories. Creates backup in ds_config/backups/ if file exists.",
   parameters: {
     type: "object",
     properties: {
@@ -18,13 +19,16 @@ module.exports = {
       const dir = path.dirname(resolved);
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
       
+      let backupPath = null;
       if (fs.existsSync(resolved)) {
-        fs.writeFileSync(resolved + '.bak', fs.readFileSync(resolved, 'utf8'), 'utf8');
+        const backupDir = getBackupsPath();
+        backupPath = path.join(backupDir, resolved.replace(/\//g, '_') + '_' + Date.now() + '.bak');
+        fs.writeFileSync(backupPath, fs.readFileSync(resolved, 'utf8'), 'utf8');
       }
       
       fs.writeFileSync(resolved, content, 'utf8');
-      const action = fs.existsSync(resolved + '.bak') ? 'Overwritten' : 'Created';
-      return `✅ ${action} ${resolved} (${content.split('\n').length} lines).`;
+      const action = backupPath ? 'Overwritten (backup created)' : 'Created';
+      return `✅ ${action} ${resolved} (${content.split('\n').length} lines). Backup: ${backupPath || 'none'}`;
     } catch (err) {
       return `Error writing file: ${err.message}`;
     }

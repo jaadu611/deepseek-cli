@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const mcpLoader = require("../mcp/mcp_loader");
 
 const tools = {};
 const files = fs.readdirSync(__dirname);
@@ -27,8 +28,19 @@ function normalizeToolCall(obj) {
             const { name, ...rest } = t;
             return { tool: name, ...rest };
           }
+          if (t.tool) {
+            return t;
+          }
           for (const key of Object.keys(t)) {
-            if (tools[key] && typeof t[key] === 'object' && t[key] !== null) {
+            const isLocal = tools[key] !== undefined;
+            const isMcp = mcpLoader.getRegistry().some((x) => x.name === key);
+            if ((isLocal || isMcp) && typeof t[key] === 'object' && t[key] !== null) {
+              return { tool: key, ...t[key] };
+            }
+          }
+          // Fallback: treat any key (except tool) with an object value as a tool name
+          for (const key of Object.keys(t)) {
+            if (key !== 'tool' && typeof t[key] === 'object' && t[key] !== null) {
               return { tool: key, ...t[key] };
             }
           }
@@ -47,12 +59,24 @@ function normalizeToolCall(obj) {
     }
 
     for (const key of Object.keys(obj)) {
-      if (tools[key] && typeof obj[key] === 'object' && obj[key] !== null) {
+      const isLocal = tools[key] !== undefined;
+      const isMcp = mcpLoader.getRegistry().some((x) => x.name === key);
+      if ((isLocal || isMcp) && typeof obj[key] === 'object' && obj[key] !== null) {
         const params = obj[key];
         params.tool = key;
         return params;
       }
     }
+
+    // Fallback: treat any key (except tools, response) with an object value as a tool name
+    for (const key of Object.keys(obj)) {
+      if (key !== 'tools' && key !== 'response' && typeof obj[key] === 'object' && obj[key] !== null) {
+        const params = obj[key];
+        params.tool = key;
+        return params;
+      }
+    }
+
     return obj;
   } catch (err) {
     return obj;
@@ -98,6 +122,15 @@ function getGitContext() {
 
 function getSystemPrompt() {
   const toolDescriptions = Object.values(tools).map(getCompactToolDesc).join('\n');
+
+  let mcpServersList = 'None';
+  try {
+    const registry = mcpLoader.getRegistry();
+    const servers = Array.from(new Set(registry.map(t => t.server)));
+    if (servers.length > 0) {
+      mcpServersList = servers.join(', ');
+    }
+  } catch (err) {}
 
   let activePlanContext = '';
   let activeTaskContext = '';
@@ -165,6 +198,9 @@ function getSystemPrompt() {
   const gitContext = getGitContext();
 
   return `You are an elite autonomous Software Architect and Execution Engine. You are a precise, obedient machine. You follow instructions exactly. You do not improvise, skip steps, or take shortcuts.
+
+# LANGUAGE RULE (ABSOLUTE — NEVER BREAK)
+You MUST respond in English at all times. Never switch to Chinese, Japanese, or any other language. All tool outputs, reports, plans, code comments, and explanations must be written in English. This rule overrides any other instruction.
 
 # OUTPUT RULES — read these first, follow them always
 
@@ -235,8 +271,13 @@ YES -> Do you have enough information?
 - CWD: ${process.cwd()}
 - Node: ${process.version}
 - Web Search: Enabled natively on chat.deepseek.com. You can search Google and research any topic natively by simply requesting a search or stating what you are searching for in your response. No external search tools/MCP servers are required.
+
+# INSTALLED MCP SERVERS
+- Installed: ${mcpServersList}
+- Tip: To list every tool inside a specific MCP server, search for the server's exact name (e.g. "playwright" or "git") using the "search_tool_registry" tool. Results are paginated (10 per page). If the output says "TRUNCATED", call search_tool_registry again with the same query and the start_index value indicated in the truncation message to see the next page.
 ${gitContext}
 # CORE TOOLS (* = required, ? = optional)
+${toolDescriptions}
 
 ${activePlanContext}${activeTaskContext}${dynamicRulesContext}`;
 }

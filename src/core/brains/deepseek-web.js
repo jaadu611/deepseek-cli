@@ -78,7 +78,7 @@ class DeepSeekWebBrain extends BaseBrain {
       if (!session.deepseek_id) {
         const m = page.url().match(/\/a\/chat\/s\/([a-zA-Z0-9_-]+)/);
         if (m) {
-          const { updateSessionDeepseekId } = require("../history");
+          const { updateSessionDeepseekId } = require("../../history");
           updateSessionDeepseekId(session.id, m[1]);
         }
       }
@@ -101,7 +101,7 @@ class DeepSeekWebBrain extends BaseBrain {
     while (Date.now() - start < timeout) {
       try {
         await new Promise((resolve, reject) => {
-          const req = http.get(`http://localhost:${port}/json/version`, (res) => {
+          const req = http.get(`http://127.0.0.1:${port}/json/version`, (res) => {
             if (res.statusCode === 200) resolve();
             else reject(new Error("Status " + res.statusCode));
           });
@@ -132,7 +132,7 @@ class DeepSeekWebBrain extends BaseBrain {
     if (this.initializing) return this.initializing;
     this.initializing = (async () => {
       await this.waitForCDP();
-      const browser = await chromium.connectOverCDP("http://localhost:9222");
+      const browser = await chromium.connectOverCDP("http://127.0.0.1:9222");
       const ctx = browser.contexts()[0];
       let page = ctx.pages().find((p) => p.url().includes("chat.deepseek.com"));
       if (!page) {

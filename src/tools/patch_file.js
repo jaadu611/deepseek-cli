@@ -1,9 +1,10 @@
 const fs = require('fs');
 const path = require('path');
+const { getBackupsPath } = require('../utils/config');
 
 module.exports = {
   name: "patch_file",
-  description: "Safely modifies an existing file. PREFERRED METHOD: Use start_line + end_line + new_content for precise edits. FALLBACK: Use find_string + replace_string ONLY for tiny, unique changes. ALWAYS call read_file first to get current line numbers. Creates a .bak backup automatically.",
+  description: "Safely modifies an existing file. PREFERRED METHOD: Use start_line + end_line + new_content for precise edits. FALLBACK: Use find_string + replace_string ONLY for tiny, unique changes. ALWAYS call read_file first to get current line numbers. Creates a backup in ds_config/backups/ automatically.",
   parameters: {
     type: "object",
     properties: {
@@ -30,11 +31,13 @@ module.exports = {
         if (start_line < 1 || end_line > lines.length || start_line > end_line) {
           return `Error: Line range ${start_line}-${end_line} is invalid. File has ${lines.length} lines. Call read_file to verify.`;
         }
-        fs.writeFileSync(resolved + '.bak', content, 'utf8');
+        const backupDir = getBackupsPath();
+        const backupPath = path.join(backupDir, resolved.replace(/\//g, '_') + '_' + Date.now() + '.bak');
+        fs.writeFileSync(backupPath, content, 'utf8');
         const newLines = new_content.split('\n');
         lines.splice(start_line - 1, end_line - start_line + 1, ...newLines);
         fs.writeFileSync(resolved, lines.join('\n'), 'utf8');
-        return `✅ Patched lines ${start_line}-${end_line} successfully. Backup saved as ${resolved}.bak`;
+        return `✅ Patched lines ${start_line}-${end_line} successfully. Backup saved as ${backupPath}`;
       }
       
       // STRATEGY 2: Unique String Match (Fallback for tiny edits)
@@ -46,9 +49,11 @@ module.exports = {
         if (occurrences > 1) {
           return `❌ find_string matched ${occurrences} times. Include more surrounding context OR use start_line/end_line instead.`;
         }
-        fs.writeFileSync(resolved + '.bak', content, 'utf8');
+        const backupDir = getBackupsPath();
+        const backupPath = path.join(backupDir, resolved.replace(/\//g, '_') + '_' + Date.now() + '.bak');
+        fs.writeFileSync(backupPath, content, 'utf8');
         fs.writeFileSync(resolved, content.replace(find_string, replace_string), 'utf8');
-        return `✅ String replacement successful. Backup saved as ${resolved}.bak`;
+        return `✅ String replacement successful. Backup saved as ${backupPath}`;
       }
       
       return `Error: Provide either (start_line + end_line + new_content) OR (find_string + replace_string).`;

@@ -4,7 +4,7 @@ const fs = require("fs");
 // Create mcp-sandbox directory at startup
 fs.mkdirSync("/tmp/mcp-sandbox", { recursive: true });
 
-const cli = require("./src/cli");
+const cli = require("./src/cli/cli");
 
 process.on('uncaughtException', (err) => {
   const fs = require('fs');
@@ -27,7 +27,7 @@ if (require.main === module) {
   });
 } else {
   // Backwards compatibility for exports if needed
-  const tui = require("./src/tui");
+  const tui = require("./src/tui/tui");
   module.exports = {
     renderMd: tui.renderMd,
     wrapText: tui.wrapText,

@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const { getSessionsPath } = require('./utils/config');
+const { getSessionsPath } = require('../utils/config');
 
 const HISTORY_DIR = getSessionsPath();
 const SESSIONS_DIR = HISTORY_DIR;

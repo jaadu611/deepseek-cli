@@ -1,17 +1,16 @@
 const fs = require("fs");
-const keyword_extractor = require("keyword-extractor");
 const path = require("path");
 const os = require("os");
-const tui = require("./tui");
-const orchestrator = require("./orchestrator");
-const brainRegistry = require("./brains/registry");
-const mcpLoader = require("./mcp/mcp_loader");
+const tui = require("../tui/tui");
+const orchestrator = require("../core/orchestrator");
+const brainRegistry = require("../core/brains/registry");
+const mcpLoader = require("../mcp/mcp_loader");
 const {
   initHistory,
   getSessions,
   setCurrentSessionId,
   loadSessionMessages,
-} = require("./history");
+} = require("../core/history");
 
 process.on("unhandledRejection", (reason) => {
   if (orchestrator.isBusy()) {
@@ -27,52 +26,7 @@ process.on("unhandledRejection", (reason) => {
   );
 });
 
-function generateLocalTriggers(pkg, serverName) {
-  const words = new Set();
-  words.add(serverName.toLowerCase());
 
-  const cleanPkg = pkg.toLowerCase().replace(/@/g, '').replace(/\//g, '-');
-  const parts = cleanPkg.split('-');
-  for (const part of parts) {
-    if (part.length > 3 && part !== 'server' && part !== 'protocol' && part !== 'modelcontextprotocol') {
-      words.add(part);
-    }
-  }
-
-  if (serverName.includes('-')) {
-    serverName.split('-').forEach(p => {
-      if (p.length > 3) words.add(p);
-    });
-  }
-  if (serverName.includes('_')) {
-    serverName.split('_').forEach(p => {
-      if (p.length > 3) words.add(p);
-    });
-  }
-
-  return Array.from(words);
-}
-
-async function generateKeywordTriggers(pkg, serverName) {
-  const localTriggers = generateLocalTriggers(pkg, serverName);
-  const textToExtract = `${pkg.replace(/@/g, '').replace(/\//g, ' ')} ${serverName.replace(/[-_]/g, ' ')}`;
-  
-  const extracted = keyword_extractor.extract(textToExtract, {
-    language: "english",
-    remove_digits: true,
-    return_changed_case: true,
-    remove_duplicates: true
-  });
-  
-  const merged = new Set([...localTriggers]);
-  extracted.forEach(word => {
-    if (word.length > 3 && word !== 'server' && word !== 'protocol' && word !== 'modelcontextprotocol') {
-      merged.add(word);
-    }
-  });
-
-  return Array.from(merged);
-}
 
 // ── key bindings ──────────────────────────────────────────────────────────────
 tui.input.key(["pageup"], () => tui.scrollUp());
@@ -189,15 +143,19 @@ tui.input.on("submit", async (val) => {
         return;
       }
       
-      const triggers = await generateKeywordTriggers(pkg, serverName);
+      const serverEnv = {};
+      if (pkg.includes("server-puppeteer") || pkg.includes("puppeteer")) {
+        serverEnv.PUPPETEER_SKIP_DOWNLOAD = "true";
+        serverEnv.PUPPETEER_EXECUTABLE_PATH = "/usr/bin/chromium";
+      }
 
       config.mcpServers[serverName] = {
         command: "npx",
         args: ["-y", pkg, ...extraArgs],
-        triggers: triggers,
+        ...(Object.keys(serverEnv).length > 0 && { env: serverEnv })
       };
       fs.writeFileSync(mcpConfigPath, JSON.stringify(config, null, 2));
-      logItems.push({ type: "status", text: `Installed MCP server '${serverName}' (${pkg}) with triggers: ${triggers.join(', ')}. Restart ds to activate.` });
+      logItems.push({ type: "status", text: `Installed MCP server '${serverName}' (${pkg}). Restart ds to activate.` });
     } catch (err) {
       logItems.push({ type: "error", message: `Failed: ${err.message}` });
     }

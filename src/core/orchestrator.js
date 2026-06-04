@@ -1,8 +1,8 @@
-const { tools, getSystemPrompt, normalizeToolCall } = require("./tools");
-const mcpLoader = require("./mcp/mcp_loader");
-const tui = require("./tui");
+const { tools, getSystemPrompt, normalizeToolCall } = require("../tools");
+const mcpLoader = require("../mcp/mcp_loader");
+const tui = require("../tui/tui");
 const brainRegistry = require("./brains/registry");
-const { loadConfig } = require("./utils/config");
+const { loadConfig } = require("../utils/config");
 const {
   getCurrentSessionId,
   createSession,
@@ -20,10 +20,8 @@ function isValidToolCall(normalized) {
   if (normalized._isMulti && Array.isArray(normalized.calls) && normalized.calls.length > 0) {
     return true;
   }
-  if (normalized.tool) {
-    const isLocal = tools[normalized.tool] !== undefined;
-    const isMcp = mcpLoader.getRegistry().some((x) => x.name === normalized.tool);
-    return isLocal || isMcp;
+  if (normalized.tool && typeof normalized.tool === "string") {
+    return true;
   }
   return false;
 }
@@ -226,42 +224,7 @@ async function ask(prompt) {
   try {
     let currentPrompt = `[System Instructions]\n${getSystemPrompt()}\n\n[User Request]\n${prompt}`;
 
-    const registry = mcpLoader.getRegistry();
-    if (registry.length > 0) {
-      const q = prompt.toLowerCase();
-      
-      const triggeredServers = new Set();
-      const mcpServers = mcpConfig?.mcpServers || {};
-      for (const [serverName, serverCfg] of Object.entries(mcpServers)) {
-        const triggers = serverCfg.triggers || [];
-        for (const trigger of triggers) {
-          const cleanTrigger = trigger.toLowerCase().trim();
-          if (cleanTrigger && q.includes(cleanTrigger)) {
-            triggeredServers.add(serverName);
-            break;
-          }
-        }
-      }
 
-      const toolsToShow = registry.filter(tool => triggeredServers.has(tool.server));
-
-      if (toolsToShow.length > 0) {
-        const autoFuzzyContext = `\n\n[Auto-Discovered External Tools (Relevant to your request)]\n` + 
-          `(Note: These tools were automatically matched based on your triggers.)\n\n` +
-          toolsToShow.map((tool) => {
-            const shortDesc = tool.description ? tool.description.split('\n')[0].substring(0, 150) : '';
-            let paramsStr = '';
-            if (tool.inputSchema && tool.inputSchema.properties) {
-              paramsStr = Object.entries(tool.inputSchema.properties).map(([k, v]) => {
-                const req = (tool.inputSchema.required || []).includes(k) ? '*' : '';
-                return `  - ${k}${req} (${v.type || 'any'}): ${v.description ? v.description.split('\n')[0] : ''}`;
-              }).join('\n');
-            }
-            return `Tool Name: ${tool.name}\nDescription: ${shortDesc}\nParameters (* = required):\n${paramsStr || '  (none)'}`;
-          }).join('\n\n---\n');
-        currentPrompt += autoFuzzyContext;
-      }
-    }
 
     let isInitial = true;
 
@@ -346,6 +309,11 @@ async function ask(prompt) {
       if (jsonStart !== -1) {
         textBeforeJson = responseText.substring(0, jsonStart).trim();
       }
+      // Remove trailing markdown code fences
+      textBeforeJson = textBeforeJson
+        .replace(/```json\s*$/i, "")
+        .replace(/```\s*$/, "")
+        .trim();
       dsItem.text = textBeforeJson;
       dsItem.thinking = thinkingText;
       dsItem.spinning = false;
@@ -441,9 +409,10 @@ async function ask(prompt) {
                 calls.length - MAX_PAR
               } call(s) truncated — issue them next turn if needed.`
             : "";
-        const FORMAT_REMINDER = `\n\n[Reminder: You can either invoke another tool using JSON, or output plain text to respond to the user if you are done.\n` +
+        const FORMAT_REMINDER = `\n\n[Reminder: You MUST respond in English only. You can either invoke another tool using JSON, or output plain text to respond to the user if you are done.\n` +
           `JSON Format (Single):\n{"tool": "tool_name", "param1": "val"}\n` +
-          `JSON Format (Parallel):\n{"tools": [{"name": "t1", "p1": "v1"}, {"name": "t2"}]}]`;
+          `JSON Format (Parallel):\n{"tools": [{"name": "t1", "p1": "v1"}, {"name": "t2"}]}\n` +
+          `LANGUAGE: English only. Never respond in Chinese or any other non-English language.]`;
         currentPrompt = `${combined}${overflow}${FORMAT_REMINDER}`;
         isInitial = false;
         dsItem = { type: "deepseek", text: "", spinning: true };
@@ -503,9 +472,10 @@ async function ask(prompt) {
 
         await new Promise((r) => setTimeout(r, 100));
 
-        const FORMAT_REMINDER = `\n\n[Reminder: You can either invoke another tool using JSON, or output plain text to respond to the user if you are done.\n` +
+        const FORMAT_REMINDER = `\n\n[Reminder: You MUST respond in English only. You can either invoke another tool using JSON, or output plain text to respond to the user if you are done.\n` +
           `JSON Format (Single):\n{"tool": "tool_name", "param1": "val"}\n` +
-          `JSON Format (Parallel):\n{"tools": [{"name": "t1", "p1": "v1"}, {"name": "t2"}]}]`;
+          `JSON Format (Parallel):\n{"tools": [{"name": "t1", "p1": "v1"}, {"name": "t2"}]}\n` +
+          `LANGUAGE: English only. Never respond in Chinese or any other non-English language.]`;
         currentPrompt = `[Tool Output for ${toolName}]\n${toolResult}${FORMAT_REMINDER}`;
         isInitial = false;
 

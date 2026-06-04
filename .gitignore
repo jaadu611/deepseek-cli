@@ -6,3 +6,5 @@ task.md
 ds_config/
 scratch/
 workflows/
+installed_servers/
+.playwright-mcp/

@@ -42,7 +42,10 @@ function init(onStatusUpdate) {
                 if (typeof onStatusUpdate === 'function') {
                   onStatusUpdate(`downloading MCP server: ${fullPkg}...`);
                 }
-                execSync(`npm install --prefix "${installedServersDir}" ${fullPkg}`, { stdio: 'ignore' });
+                 execSync(`npm install --prefix "${installedServersDir}" ${fullPkg}`, {
+                   stdio: 'ignore',
+                   env: { ...process.env, PUPPETEER_SKIP_DOWNLOAD: 'true' }
+                 });
               }
               
               const pkgJson = JSON.parse(fs.readFileSync(path.join(pkgDir, 'package.json'), 'utf8'));

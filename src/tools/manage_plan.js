@@ -1,9 +1,10 @@
 const fs = require('fs');
 const path = require('path');
+const { getScratchPath } = require('../utils/config');
 
 module.exports = {
   name: "manage_plan",
-  description: "Creates or updates the implementation_plan.md file in the current working directory to organize the technical approach for the current goal.",
+  description: "Creates or updates the implementation_plan.md file in the ds_config/scratch/ directory to organize the technical approach for the current goal.",
   parameters: {
     type: "object",
     properties: {
@@ -19,8 +20,8 @@ module.exports = {
       if (!plan_markdown || typeof plan_markdown !== 'string') {
         return 'Error: Required parameter "plan_markdown" is missing or invalid. You must provide the plan content as a string.';
       }
-      const repoRoot = path.join(__dirname, '..', '..');
-      const planPath = path.join(repoRoot, 'implementation_plan.md');
+      const scratchDir = getScratchPath();
+      const planPath = path.join(scratchDir, 'implementation_plan.md');
       fs.writeFileSync(planPath, plan_markdown, 'utf8');
       return `Implementation plan updated successfully at ${planPath}`;
     } catch (err) {
