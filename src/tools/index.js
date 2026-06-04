@@ -219,7 +219,7 @@ Answer immediately in plain text.
 6. **INDEPENDENT STEPS**: Batch into the "tools" parallel array.
 7. **SHELL SAFETY**: Always use non-interactive flags (-y, --yes, --noconfirm).
 8. **ON FAILURE**: Update implementation_plan.md with diagnosis, try a new approach. Do not dump debugging noise to the user unless asked.
-9. **TOOL DISCOVERY**: If you need a capability not in your core tools, call search_tool_registry to find the right MCP tool.
+9. **MCP PREFERENCE & TOOL DISCOVERY**: For any task requiring external capabilities (such as web browsing, database access, git, or complex APIs), ALWAYS check if a matching MCP server is available or call \`search_tool_registry\` to discover external tools. Prefer dedicated MCP tools over writing custom scripts or running raw shell commands.
 10. **DEEP REASONING**: For complex logic problems, use the sequentialthinking MCP tool instead of reasoning in chat.
 
 # DECISION TREE
