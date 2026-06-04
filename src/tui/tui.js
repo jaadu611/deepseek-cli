@@ -1,4 +1,5 @@
 const blessed = require("blessed");
+const fs = require("fs");
 
 // ── palette ───────────────────────────────────────────────────────────────────
 const R = "\x1b[0m";
@@ -243,26 +244,34 @@ const chat = blessed.box({
   style: { bg: "default", fg: "#d2d2d2" },
 });
 
-// Auto-scroll state
 let autoScrollEnabled = true;
-let lastScrollPerc = 0;
 
 chat.on("scroll", () => {
-  const scrollPerc = chat.getScrollPerc();
-  if (scrollPerc !== undefined) {
-    if (scrollPerc < 99 && lastScrollPerc >= 99) {
+  const scrollHeight = chat.getScrollHeight();
+  const height = chat.height - chat.itop - chat.ibot;
+  const currentScroll = chat.getScroll();
+
+  if (scrollHeight > height) {
+    if (currentScroll < scrollHeight - height - 2) {
       autoScrollEnabled = false;
-    } else if (scrollPerc >= 99 && !autoScrollEnabled) {
+    } else {
       autoScrollEnabled = true;
-      scrollChatToBottom();
     }
-    lastScrollPerc = scrollPerc;
+  } else {
+    autoScrollEnabled = true;
   }
 });
 
 function scrollChatToBottom() {
   chat.setScrollPerc(100);
   scr.render();
+}
+
+function setAutoScroll(enabled) {
+  autoScrollEnabled = !!enabled;
+  if (autoScrollEnabled) {
+    scrollChatToBottom();
+  }
 }
 
 const inputSep = blessed.line({
@@ -468,11 +477,11 @@ function renderLog() {
       }
     }
 
-    chat.setContent(lines.join("\n"));
-    scr.render();
+    chat.setContent(lines.join("\n") + "\n\n\n");
     if (autoScrollEnabled) {
-      scrollChatToBottom();
+      chat.setScrollPerc(100);
     }
+    scr.render();
   } catch (outerErr) {
     const fs = require('fs');
     fs.appendFileSync('/tmp/deepseek-cli-crash.log', `renderLog outer error: ${outerErr.stack}\n`);
@@ -576,6 +585,7 @@ module.exports = {
   scrollDown,
   scrollUp,
   scrollChatToBottom,
+  setAutoScroll,
   startGlobalSpinner,
   stopGlobalSpinner,
   renderLog,

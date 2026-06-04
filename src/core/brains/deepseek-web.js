@@ -61,14 +61,82 @@ class DeepSeekWebBrain extends BaseBrain {
   }
 
   async onSessionLoad(session) {
-    if (session.deepseek_id) {
-      try {
-        const page = await this.getPage();
-        if (!page.url().includes(session.deepseek_id)) {
-          page.goto(`https://chat.deepseek.com/a/chat/s/${session.deepseek_id}`).catch(() => {});
+    try {
+      const page = await this.getPage();
+      const currentUrl = page.url();
+      require('fs').appendFileSync(
+        "/tmp/deepseek-cli-debug.log",
+        `[Brain] onSessionLoad called: session=${JSON.stringify(session)}, currentUrl=${currentUrl}\n`
+      );
+      if (session && session.deepseek_id) {
+        if (!currentUrl.includes(session.deepseek_id)) {
+          await page.goto(`https://chat.deepseek.com/a/chat/s/${session.deepseek_id}`).catch(() => {});
           await this.setupInterceptors(page);
         }
-      } catch (err) {}
+      } else {
+        if (currentUrl.includes("/a/chat/s/")) {
+          // Try to click the "New Chat" button on the web UI to avoid full page reload challenges
+          const clicked = await page.evaluate(() => {
+            const selectors = [
+              'button[aria-label*="New Chat"i]',
+              'button[title*="New Chat"i]',
+              'div[role="button"][aria-label*="New Chat"i]',
+              'a[aria-label*="New Chat"i]',
+              '.ds-sidebar button', // common sidebar button selector class prefixes
+            ];
+            for (const sel of selectors) {
+              const elements = document.querySelectorAll(sel);
+              for (const el of elements) {
+                const text = (el.textContent || '').trim().toLowerCase();
+                if (text.includes('new chat') || text === 'new' || text === '+ new chat') {
+                  el.click();
+                  return true;
+                }
+              }
+              const firstEl = document.querySelector(sel);
+              if (firstEl && (firstEl.getAttribute('aria-label') || '').toLowerCase().includes('new chat')) {
+                firstEl.click();
+                return true;
+              }
+            }
+            // General query selector for button/div texts
+            const allElements = Array.from(document.querySelectorAll('button, div[role="button"], a, span, p'));
+            for (const el of allElements) {
+              const text = (el.textContent || '').trim().toLowerCase();
+              if (text === 'new chat' || text === '+ new chat' || text === 'new') {
+                let clickable = el;
+                while (clickable && clickable.tagName !== 'BUTTON' && clickable.tagName !== 'A' && clickable.getAttribute('role') !== 'button') {
+                  clickable = clickable.parentElement;
+                }
+                if (clickable) {
+                  clickable.click();
+                  return true;
+                }
+              }
+            }
+            return false;
+          }).catch(() => false);
+
+          if (clicked) {
+            // Give it a brief moment to update the DOM/URL
+            await page.waitForTimeout(400).catch(() => {});
+          }
+          
+          // If the click failed to navigate away from the session URL, reload to the new chat page
+          if (page.url().includes("/a/chat/s/")) {
+            await page.goto("https://chat.deepseek.com/").catch(() => {});
+            await this.setupInterceptors(page);
+          }
+        } else if (!currentUrl.includes("chat.deepseek.com")) {
+          await page.goto("https://chat.deepseek.com/").catch(() => {});
+          await this.setupInterceptors(page);
+        }
+      }
+    } catch (err) {
+      require('fs').appendFileSync(
+        "/tmp/deepseek-cli-debug.log",
+        `[Brain] onSessionLoad error: ${err.stack || err.message}\n`
+      );
     }
   }
 
@@ -354,7 +422,7 @@ class DeepSeekWebBrain extends BaseBrain {
   async getCompletionStream(prompt, { onStartCalled, onProgress }) {
     const page = await this.getPage();
     let attempt = 0;
-    const maxAttempts = 3;
+    const maxAttempts = 5;
 
     while (attempt < maxAttempts) {
       attempt++;
@@ -483,6 +551,16 @@ class DeepSeekWebBrain extends BaseBrain {
       const thinkSoFar = this._thinkingChunks.join("");
       const respSoFar = this._responseChunks.join("");
       if (thinkSoFar && this._thinkingStartTime) this._thinkingEndTime = Date.now();
+
+      if (!thinkSoFar.trim() && !respSoFar.trim()) {
+        require("fs").appendFileSync(
+          "/tmp/deepseek-cli-debug.log",
+          `[Brain] Attempt ${attempt} returned completely empty response. Reloading and retrying...\n`
+        );
+        await page.reload().catch(() => {});
+        await new Promise((r) => setTimeout(r, 3000));
+        continue;
+      }
 
       if (onProgress) {
         onProgress({

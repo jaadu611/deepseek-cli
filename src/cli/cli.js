@@ -74,18 +74,31 @@ tui.input.on("submit", async (val) => {
     tui.setLogItems([]);
     setCurrentSessionId(null);
     tui.setTopBarTitle("new session");
+    tui.setAutoScroll(true);
     tui.renderLog();
-    tui.refocusInput();
 
     const brain = brainRegistry.getActiveBrain();
-    if (brain && brain.id === "deepseek-web") {
-      brain.getPage().then(async (page) => {
-        try {
-          await page.goto("https://chat.deepseek.com/", { waitUntil: "commit" });
-          await brain.setupInterceptors(page);
-        } catch (e) {}
-      });
+    if (brain && typeof brain.onSessionLoad === "function") {
+      orchestrator.setBusy(true);
+      const switchItem = { type: "status", text: "opening new chat session in browser..." };
+      const logItems = tui.getLogItems();
+      logItems.push(switchItem);
+      tui.startGlobalSpinner();
+      tui.renderLog();
+
+      try {
+        await brain.onSessionLoad(null);
+      } catch (e) {}
+
+      const idx = logItems.indexOf(switchItem);
+      if (idx !== -1) {
+        logItems.splice(idx, 1);
+      }
+      tui.stopGlobalSpinner();
+      tui.renderLog();
+      orchestrator.setBusy(false);
     }
+    tui.refocusInput();
     return;
   }
 
@@ -268,6 +281,7 @@ async function loadSessionIntoTUI(session) {
   const logItems = [];
   tui.setLogItems(logItems);
   tui.setTopBarTitle(session.title);
+  tui.setAutoScroll(true);
 
   for (const msg of loadSessionMessages(session.id)) {
     if (msg.role === "user") {
@@ -307,7 +321,24 @@ async function loadSessionIntoTUI(session) {
 
   const brain = brainRegistry.getActiveBrain();
   if (brain && typeof brain.onSessionLoad === "function") {
-    brain.onSessionLoad(session).catch(() => {});
+    orchestrator.setBusy(true);
+    const switchItem = { type: "status", text: "switching browser to selected chat..." };
+    logItems.push(switchItem);
+    tui.startGlobalSpinner();
+    tui.renderLog();
+
+    try {
+      await brain.onSessionLoad(session);
+    } catch (e) {}
+
+    const idx = logItems.indexOf(switchItem);
+    if (idx !== -1) {
+      logItems.splice(idx, 1);
+    }
+    tui.stopGlobalSpinner();
+    tui.renderLog();
+    tui.scrollChatToBottom();
+    orchestrator.setBusy(false);
   }
 }
 

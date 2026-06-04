@@ -120,7 +120,7 @@ function getGitContext() {
   }
 }
 
-function getSystemPrompt() {
+function getSystemPrompt(userPrompt) {
   const toolDescriptions = Object.values(tools).map(getCompactToolDesc).join('\n');
 
   let mcpServersList = 'None';
@@ -170,15 +170,20 @@ function getSystemPrompt() {
       const wfFiles = fs.readdirSync(workflowsDir);
       for (const file of wfFiles) {
         if (file.endsWith('.md')) {
-          const content = fs.readFileSync(path.join(workflowsDir, file), 'utf8');
+          let content = fs.readFileSync(path.join(workflowsDir, file), 'utf8');
           
           if (isGlobal) {
             const firstLine = content.split('\n')[0].trim();
             if (firstLine.startsWith('trigger:')) {
               const trigger = firstLine.replace('trigger:', '').trim().toLowerCase();
-              if (trigger && !projectDependencies.toLowerCase().includes(trigger)) {
+              const inDeps = trigger && projectDependencies.toLowerCase().includes(trigger);
+              const inPrompt = trigger && userPrompt && userPrompt.toLowerCase().includes(trigger);
+              if (!inDeps && !inPrompt) {
                 continue;
               }
+              const lines = content.split('\n');
+              lines.shift();
+              content = lines.join('\n');
             }
           }
           

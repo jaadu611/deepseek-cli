@@ -187,6 +187,7 @@ function setBusy(val) {
 
 async function ask(prompt) {
   busy = true;
+  tui.setAutoScroll(true);
   const brain = brainRegistry.getActiveBrain();
   
   let hasEditedFiles = false;
@@ -274,7 +275,7 @@ async function ask(prompt) {
   }
 
   try {
-    let currentPrompt = `[System Instructions]\n${getSystemPrompt()}\n\n[User Request]\n${prompt}`;
+    let currentPrompt = `[System Instructions]\n${getSystemPrompt(prompt)}\n\n[User Request]\n${prompt}`;
 
 
 
