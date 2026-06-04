@@ -1,6 +1,6 @@
 const { exec } = require('child_process');
 const { isCommandAllowed, getPermissionErrorCommand } = require('../utils/permissions');
-const { recordContext } = require('../utils/context');
+
 
 module.exports = {
   name: "execute_shell_command",
@@ -51,8 +51,7 @@ module.exports = {
       }
     }
 
-    // Record context
-    recordContext(`executed: ${command.substring(0, 100)}`);
+
 
     const options = {
       timeout,

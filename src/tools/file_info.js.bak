@@ -1,4 +1,4 @@
-const fs = require('fs'); // test rollback
+const fs = require('fs'); // test
 const path = require('path');
 const { isPathAllowed, getPermissionErrorPath } = require('../utils/permissions');
 

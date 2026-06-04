@@ -118,11 +118,7 @@ function getSystemPrompt() {
     }
   } catch { }
 
-  let recentContextSummary = '';
-  try {
-    const { getContextSummary } = require('../utils/context');
-    recentContextSummary = getContextSummary();
-  } catch { }
+
 
   let dynamicRulesContext = '';
   try {
@@ -242,8 +238,7 @@ YES -> Do you have enough information?
 ${gitContext}
 # CORE TOOLS (* = required, ? = optional)
 
-${toolDescriptions}
-${activePlanContext}${activeTaskContext}${dynamicRulesContext}${recentContextSummary}`;
+${activePlanContext}${activeTaskContext}${dynamicRulesContext}`;
 }
 
 module.exports = {

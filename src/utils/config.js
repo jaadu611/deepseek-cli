@@ -4,7 +4,7 @@ const os = require('os');
 
 const DS_CONFIG_DIR = path.join(os.homedir(), '.deepseek_cli', 'ds_config');
 const CONFIG_PATH = path.join(DS_CONFIG_DIR, 'config.json');
-const CONTEXT_CACHE_PATH = path.join(DS_CONFIG_DIR, 'context_cache.json');
+
 
 function ensureConfigDir() {
   if (!fs.existsSync(DS_CONFIG_DIR)) {
@@ -79,6 +79,5 @@ module.exports = {
   getBackupsPath,
   getSessionsPath,
   DS_CONFIG_DIR,
-  CONFIG_PATH,
-  CONTEXT_CACHE_PATH
+  CONFIG_PATH
 };
