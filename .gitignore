@@ -1,4 +1,7 @@
+# Dependencies
 node_modules/
+
+# Temporary plan/task files (old location, now in ds_config/scratch/)
 implementation_plan.md
 task.md
 
@@ -8,4 +11,10 @@ scratch/
 workflows/
 installed_servers/
 .playwright-mcp/
+
+# MCP configuration (user-specific, contains local paths)
 src/mcp/mcp.json
+
+# Backup and log files
+*.bak
+*.log
