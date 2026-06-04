@@ -1,51 +1,30 @@
 const fs = require('fs');
 const path = require('path');
-const { getBackupsPath } = require('../utils/config');
-const { isPathAllowed, getPermissionErrorPath } = require('../utils/permissions');
 
 module.exports = {
   name: "write_file",
-  description: "Creates a new file or completely overwrites an existing file with new content. Optionally creates a backup in ds_config/backups/.",
+  description: "Writes complete content to a file. USE THIS INSTEAD OF patch_file WHEN: creating new files, rewriting entire files, or making changes larger than 15 lines. Automatically creates parent directories. Creates .bak backup if file exists.",
   parameters: {
     type: "object",
     properties: {
-      path: { type: "string", description: "The path where the file will be written." },
-      content: { type: "string", description: "The complete raw text content to write to the file." },
-      create_backup: { type: "boolean", description: "Create a backup before overwriting if file exists (default false)." }
+      path: { type: "string", description: "File path to write to." },
+      content: { type: "string", description: "The complete file content to write." }
     },
     required: ["path", "content"]
   },
-  async execute({ path: filePath, content, create_backup = false }) {
+  async execute({ path: filePath, content }) {
     try {
-      if (!filePath || typeof filePath !== 'string' || filePath.trim() === '') {
-        return 'Error: Required parameter "path" is missing or empty.';
-      }
-      if (content === undefined || content === null || typeof content !== 'string') {
-        return 'Error: Required parameter "content" is missing or invalid.';
-      }
-
-      const resolvedPath = path.resolve(filePath);
-      if (!isPathAllowed(resolvedPath)) {
-        return getPermissionErrorPath(resolvedPath);
-      }
-
-      if (content.length > 50 * 1024 * 1024) {
-        return `Error: Content size ${(content.length/1024/1024).toFixed(1)}MB exceeds 50MB limit.`;
-      }
-
-      if (create_backup && fs.existsSync(resolvedPath)) {
-        const backupDir = getBackupsPath();
-        const backupName = `${path.basename(resolvedPath)}.${Date.now()}.bak`;
-        const backupPath = path.join(backupDir, backupName);
-        const existingContent = fs.readFileSync(resolvedPath, 'utf8');
-        fs.writeFileSync(backupPath, existingContent, 'utf8');
-      }
-
-      fs.mkdirSync(path.dirname(resolvedPath), { recursive: true });
-      fs.writeFileSync(resolvedPath, content, 'utf8');
+      const resolved = path.resolve(filePath);
+      const dir = path.dirname(resolved);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
       
-      const lineCount = content.split('\n').length;
-      return `[Success] File written to ${resolvedPath}\n- Lines: ${lineCount}\n- Size: ${(content.length / 1024).toFixed(2)} KB`;
+      if (fs.existsSync(resolved)) {
+        fs.writeFileSync(resolved + '.bak', fs.readFileSync(resolved, 'utf8'), 'utf8');
+      }
+      
+      fs.writeFileSync(resolved, content, 'utf8');
+      const action = fs.existsSync(resolved + '.bak') ? 'Overwritten' : 'Created';
+      return `✅ ${action} ${resolved} (${content.split('\n').length} lines).`;
     } catch (err) {
       return `Error writing file: ${err.message}`;
     }

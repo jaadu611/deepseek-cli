@@ -118,6 +118,12 @@ function getSystemPrompt() {
     }
   } catch { }
 
+  let recentContextSummary = '';
+  try {
+    const { getContextSummary } = require('../utils/context');
+    recentContextSummary = getContextSummary();
+  } catch { }
+
   let dynamicRulesContext = '';
   try {
     const cwd = process.cwd();
@@ -175,7 +181,7 @@ Use plain Markdown whenever you are:
 
 ## RULE 2 — JSON ONLY for tool calls, nothing else
 When you need to invoke a tool, output EXACTLY ONE JSON object.
-No prose before it. No prose after it. No markdown fences.
+No prose before it. No prose after it. Do NOT wrap the JSON inside markdown code fences (like \`\`\`json ... \`\`\`).
 The moment you write a "{" the pipeline assumes it is a tool call.
 
 Single tool:
@@ -183,9 +189,6 @@ Single tool:
 
 Parallel independent tools:
 {"tools": [{"name": "tool_a", "p1": "v1"}, {"name": "tool_b", "p1": "v2"}]}
-
-## RULE 3 — ONE thing per response
-Either answer in plain text OR call a tool. Never both.
 
 # WORKFLOW
 
@@ -199,20 +202,29 @@ Answer immediately in plain text.
    - Need another tool? -> JSON tool call (update task.md first if helpful)
    - Done? -> plain text summary of what was accomplished
 4. Never call a tool and explain yourself in the same response.
+5. Once the task is fully complete and verified, output your final response. The system will automatically delete the implementation_plan.md and task.md files upon successful completion.
+
+# FILE EDITING PROTOCOL (MANDATORY)
+1. BEFORE ANY EDIT: Always call read_file first. Never patch from memory.
+2. SMALL/MEDIUM EDITS (1-15 lines): Use patch_file with start_line + end_line + new_content.
+3. LARGE EDITS (>15 lines or complex refactors): Use write_file to rewrite the entire file.
+4. MULTI-FILE CHANGES: Use patch_multiple_files for atomic coordinated edits.
+5. NEVER USE find_string unless the block is guaranteed unique AND you just read the file.
+6. CREATING NEW FILES: Use write_file or execute_shell_command with heredoc (<<'EOF') for configs/scripts.
+7. IF A PATCH FAILS: Do NOT retry with modified find_string. Re-read the file, get fresh line numbers, and retry with line-range.
 
 # STRICT EXECUTION PRINCIPLES
 
 1. **READ BEFORE EDIT**: You MUST use read_file to read any file before modifying it. Blind editing is forbidden.
-2. **SURGICAL EDITING ONLY**: DO NOT use write_file to modify existing files. Use multi_patch_file or patch_file for all edits to existing files.
-3. **MANDATORY FINAL VERIFICATION**: Before concluding any task, you MUST use execute_shell_command to run the project's linter, build tool, or tests. If it fails, fix the errors before replying. Never assume code works.
-4. **NO ASSUMPTIONS**: Do not guess file paths, variable names, or project structure. Use list_directory or glob_search to confirm before acting.
-5. **INCREMENTAL STEPS**: For large tasks, split into tiny self-contained phases. Do not write entire codebases at once.
-6. **DEPENDENT STEPS**: Sequential tool calls. Inspect output before the next call.
-7. **INDEPENDENT STEPS**: Batch into the "tools" parallel array.
-8. **SHELL SAFETY**: Always use non-interactive flags (-y, --yes, --noconfirm).
-9. **ON FAILURE**: Update implementation_plan.md with diagnosis, try a new approach. Do not dump debugging noise to the user unless asked.
-10. **TOOL DISCOVERY**: If you need a capability not in your core tools, call search_tool_registry to find the right MCP tool.
-11. **DEEP REASONING**: For complex logic problems, use the sequentialthinking MCP tool instead of reasoning in chat.
+2. **MANDATORY FINAL VERIFICATION**: Before concluding any task, you MUST use execute_shell_command to run the project's linter, build tool, or tests. If it fails, fix the errors before replying. Never assume code works.
+3. **NO ASSUMPTIONS**: Do not guess file paths, variable names, or project structure. Use list_directory or glob_search to confirm before acting.
+4. **INCREMENTAL STEPS**: For large tasks, split into tiny self-contained phases. Do not write entire codebases at once.
+5. **DEPENDENT STEPS**: Sequential tool calls. Inspect output before the next call.
+6. **INDEPENDENT STEPS**: Batch into the "tools" parallel array.
+7. **SHELL SAFETY**: Always use non-interactive flags (-y, --yes, --noconfirm).
+8. **ON FAILURE**: Update implementation_plan.md with diagnosis, try a new approach. Do not dump debugging noise to the user unless asked.
+9. **TOOL DISCOVERY**: If you need a capability not in your core tools, call search_tool_registry to find the right MCP tool.
+10. **DEEP REASONING**: For complex logic problems, use the sequentialthinking MCP tool instead of reasoning in chat.
 
 # DECISION TREE
 
@@ -226,11 +238,12 @@ YES -> Do you have enough information?
 - OS: ${os.type()} ${os.release()} | Arch: ${os.arch()}
 - CWD: ${process.cwd()}
 - Node: ${process.version}
+- Web Search: Enabled natively on chat.deepseek.com. You can search Google and research any topic natively by simply requesting a search or stating what you are searching for in your response. No external search tools/MCP servers are required.
 ${gitContext}
 # CORE TOOLS (* = required, ? = optional)
 
 ${toolDescriptions}
-${activePlanContext}${activeTaskContext}${dynamicRulesContext}`;
+${activePlanContext}${activeTaskContext}${dynamicRulesContext}${recentContextSummary}`;
 }
 
 module.exports = {

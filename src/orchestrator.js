@@ -229,30 +229,26 @@ async function ask(prompt) {
     const registry = mcpLoader.getRegistry();
     if (registry.length > 0) {
       const q = prompt.toLowerCase();
-      const stopWords = new Set(['the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'this', 'that', 'it']);
-      const words = q.split(/\s+/).filter(w => w.length > 2 && !stopWords.has(w));
       
-      const scored = registry.map(tool => {
-        let score = 0;
-        const name = tool.name.toLowerCase();
-        const desc = (tool.description || '').toLowerCase();
-        
-        if (name.includes(q)) score += 10;
-        if (desc.includes(q)) score += 5;
-        
-        for (const w of words) {
-          if (name.includes(w)) score += 2;
-          if (desc.includes(w)) score += 1;
+      const triggeredServers = new Set();
+      const mcpServers = mcpConfig?.mcpServers || {};
+      for (const [serverName, serverCfg] of Object.entries(mcpServers)) {
+        const triggers = serverCfg.triggers || [];
+        for (const trigger of triggers) {
+          const cleanTrigger = trigger.toLowerCase().trim();
+          if (cleanTrigger && q.includes(cleanTrigger)) {
+            triggeredServers.add(serverName);
+            break;
+          }
         }
-        return { tool, score };
-      }).filter(x => x.score > 2).sort((a, b) => b.score - a.score);
+      }
 
-      let toolsToShow = scored.slice(0, 5);
-      
+      const toolsToShow = registry.filter(tool => triggeredServers.has(tool.server));
+
       if (toolsToShow.length > 0) {
         const autoFuzzyContext = `\n\n[Auto-Discovered External Tools (Relevant to your request)]\n` + 
-          `(Note: These tools were automatically fuzzy-matched based on your prompt and might be incorrect. If you need a different tool, use the 'search_tool_registry' core tool to find it.)\n\n` +
-          toolsToShow.map(({tool}) => {
+          `(Note: These tools were automatically matched based on your triggers.)\n\n` +
+          toolsToShow.map((tool) => {
             const shortDesc = tool.description ? tool.description.split('\n')[0].substring(0, 150) : '';
             let paramsStr = '';
             if (tool.inputSchema && tool.inputSchema.properties) {
@@ -306,6 +302,9 @@ async function ask(prompt) {
       if (responseText.includes("{")) {
         parsed = extractJSON(responseText);
       }
+      if (!parsed && thinkingText && thinkingText.includes("{")) {
+        parsed = extractJSON(thinkingText);
+      }
 
       // FINAL ANSWER
       if (!parsed || parsed.response !== undefined) {
@@ -342,7 +341,12 @@ async function ask(prompt) {
       }
 
       // TOOL CALL
-      dsItem.text = "";
+      let textBeforeJson = responseText;
+      const jsonStart = responseText.indexOf("{");
+      if (jsonStart !== -1) {
+        textBeforeJson = responseText.substring(0, jsonStart).trim();
+      }
+      dsItem.text = textBeforeJson;
       dsItem.thinking = thinkingText;
       dsItem.spinning = false;
       if (dsItem.thinking) {
@@ -356,13 +360,17 @@ async function ask(prompt) {
         const calls = parsed.calls;
         const MAX_PAR = 8;
         const batch = calls.slice(0, MAX_PAR);
-        const toolItems = batch.map((c) => ({
-          type: "tool",
-          name: c.tool,
-          status: "executing",
-          result: "",
-          expanded: false,
-        }));
+        const toolItems = batch.map((c) => {
+          const { tool: _, ...toolParams } = c;
+          return {
+            type: "tool",
+            name: c.tool,
+            params: toolParams,
+            status: "executing",
+            result: "",
+            expanded: false,
+          };
+        });
         for (const t of toolItems) logItems.push(t);
         for (const c of batch) {
           saveMessage(sid, "tool_call", c.tool, { params: c });
@@ -447,6 +455,7 @@ async function ask(prompt) {
         const toolItem = {
           type: "tool",
           name: toolName,
+          params: toolParams,
           status: "executing",
           result: "",
           expanded: false,
@@ -510,6 +519,14 @@ async function ask(prompt) {
         break;
       }
     }
+
+    // Auto-delete implementation plan and task files on successful completion of task
+    try {
+      const planPath = path.join(__dirname, "..", "..", "implementation_plan.md");
+      const taskPath = path.join(__dirname, "..", "..", "task.md");
+      if (fs.existsSync(planPath)) fs.unlinkSync(planPath);
+      if (fs.existsSync(taskPath)) fs.unlinkSync(taskPath);
+    } catch (err) {}
   } catch (e) {
     if (dsItem?.spinning) {
       dsItem.spinning = false;
@@ -521,8 +538,7 @@ async function ask(prompt) {
   }
 
   busy = false;
-  tui.input.focus();
-  tui.scr.render();
+  tui.refocusInput();
 }
 
 function syncSession(sid, prompt) {

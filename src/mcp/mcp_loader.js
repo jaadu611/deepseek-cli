@@ -92,11 +92,17 @@ function init(onStatusUpdate) {
               });
             }
           } catch (err) {
-            console.error(`[MCP] Failed to connect to ${serverName}:`, err.message);
+            fs.appendFileSync(
+              "/tmp/deepseek-cli-debug.log",
+              `[MCP] Failed to connect to ${serverName}: ${err.stack || err.message}\n`
+            );
           }
         }));
       } catch (err) {
-        console.error('[MCP] Error parsing mcp.json:', err.message);
+        fs.appendFileSync(
+          "/tmp/deepseek-cli-debug.log",
+          `[MCP] Error parsing mcp.json: ${err.stack || err.message}\n`
+        );
       }
     })().catch((err) => {
       initPromise = null;

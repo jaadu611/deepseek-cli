@@ -36,7 +36,10 @@ class DeepSeekWebBrain extends BaseBrain {
         try {
           await this.getPage();
         } catch (err) {
-          console.error("[Brain] Failed to initialize page:", err.message);
+          require('fs').appendFileSync(
+            "/tmp/deepseek-cli-debug.log",
+            `[Brain] Failed to initialize page: ${err.stack || err.message}\n`
+          );
           this.initPromise = null;
           throw err;
         }
@@ -273,6 +276,53 @@ class DeepSeekWebBrain extends BaseBrain {
     await textarea.fill(prompt);
     await textarea.focus();
 
+    // Toggle search on before submitting!
+    try {
+      await page.evaluate(() => {
+        const selectors = [
+          'button[aria-label*="Search"i]',
+          'button[title*="Search"i]',
+          'div[role="button"][aria-label*="Search"i]',
+          'div[role="switch"][aria-label*="Search"i]',
+          'div[role="checkbox"][aria-label*="Search"i]'
+        ];
+        for (const sel of selectors) {
+          const el = document.querySelector(sel);
+          if (el) {
+            const isActive = el.getAttribute('aria-checked') === 'true' || 
+                             el.classList.contains('checked') ||
+                             el.classList.contains('active') ||
+                             el.className.includes('primary') ||
+                             (el.querySelector('.checked') !== null);
+            if (!isActive) {
+              el.click();
+            }
+            return;
+          }
+        }
+        const elements = Array.from(document.querySelectorAll('button, div[role="button"], div[role="switch"], div[role="checkbox"], span, p'));
+        for (const el of elements) {
+          const text = el.textContent || '';
+          if (/^(web\s+)?search$/i.test(text.trim())) {
+            let clickable = el;
+            while (clickable && clickable.tagName !== 'BUTTON' && clickable.getAttribute('role') !== 'button' && clickable.getAttribute('role') !== 'switch') {
+              clickable = clickable.parentElement;
+            }
+            if (clickable) {
+              const isActive = clickable.getAttribute('aria-checked') === 'true' || 
+                               clickable.classList.contains('checked') ||
+                               clickable.classList.contains('active') ||
+                               clickable.className.includes('primary');
+              if (!isActive) {
+                clickable.click();
+              }
+              return;
+            }
+          }
+        }
+      });
+    } catch (e) {}
+
     const sendSelectors = [
       'button[aria-label="Send Message"]',
       'button[aria-label="Send"]',
@@ -298,99 +348,185 @@ class DeepSeekWebBrain extends BaseBrain {
 
   async getCompletionStream(prompt, { onStartCalled, onProgress }) {
     const page = await this.getPage();
+    let attempt = 0;
+    const maxAttempts = 3;
 
-    // Reset state
-    this._streamDone = false;
-    this._thinkingChunks = [];
-    this._responseChunks = [];
-    this._isThinking = false;
-    this._streamBuffer = "";
-    this._thinkingStartTime = null;
-    this._thinkingEndTime = null;
+    while (attempt < maxAttempts) {
+      attempt++;
+      // Reset state
+      this._streamDone = false;
+      this._thinkingChunks = [];
+      this._responseChunks = [];
+      this._isThinking = false;
+      this._streamBuffer = "";
+      this._thinkingStartTime = null;
+      this._thinkingEndTime = null;
 
-    await this.setupInterceptors(page);
-    await this.submitPrompt(page, prompt);
+      await this.setupInterceptors(page);
+      await this.submitPrompt(page, prompt);
 
-    const CHUNK_TIMEOUT = 86400000;
-    const chunkStart = Date.now();
-    while (!this._thinkingChunks.length && !this._responseChunks.length && !this._streamDone) {
-      if (Date.now() - chunkStart > CHUNK_TIMEOUT) {
-        try {
-          page.reload().catch(() => {});
-          this._streamDone = false;
-          this._thinkingChunks = [];
-          this._responseChunks = [];
-          this._isThinking = false;
-          this._streamBuffer = "";
-          await this.submitPrompt(page, prompt);
-          await new Promise((r) => setTimeout(r, 2000));
-          if (!this._thinkingChunks.length && !this._responseChunks.length && !this._streamDone)
-            throw new Error("DeepSeek failed to stream after retry — may be rate-limited.");
-        } catch (e) {
-          throw new Error(`No stream data and recovery failed: ${e.message}`);
+      // Wait for first chunk
+      const CHUNK_TIMEOUT = 15000;
+      const chunkStart = Date.now();
+      let firstChunkSeen = false;
+      let failedToStart = false;
+
+      while (!this._thinkingChunks.length && !this._responseChunks.length && !this._streamDone) {
+        if (Date.now() - chunkStart > CHUNK_TIMEOUT) {
+          failedToStart = true;
+          break;
         }
-        break;
+        await new Promise((r) => setTimeout(r, 50));
       }
-      await new Promise((r) => setTimeout(r, 50));
-    }
 
-    const IDLE_TIMEOUT_MS = 12000000;
-    let lastDataTime = Date.now();
-    let firstChunkSeen = false;
-
-    const checkDone = () => {
-      if (this._streamDone) return true;
-      if (
-        (this._thinkingChunks.length || this._responseChunks.length) &&
-        Date.now() - lastDataTime > IDLE_TIMEOUT_MS
-      ) {
-        this._streamDone = true;
-        return true;
+      if (failedToStart) {
+        require("fs").appendFileSync(
+          "/tmp/deepseek-cli-debug.log",
+          `[Brain] Attempt ${attempt} failed to start streaming within ${CHUNK_TIMEOUT}ms. Reloading and retrying...\n`
+        );
+        await page.reload().catch(() => {});
+        await new Promise((r) => setTimeout(r, 2000));
+        continue;
       }
-      return false;
-    };
 
-    while (!this._streamDone && !checkDone()) {
-      await new Promise((r) => setTimeout(r, 100));
+      const IDLE_TIMEOUT_MS = 12000000;
+      let lastDataTime = Date.now();
+      let lastLen = 0;
+      let stoppedPrematurely = false;
+
+      const checkDone = () => {
+        if (this._streamDone) return true;
+
+        if (firstChunkSeen && Date.now() - lastDataTime > 3000) {
+          const thinkSoFar = this._thinkingChunks.join("");
+          const respSoFar = this._responseChunks.join("");
+
+          const hasJson = respSoFar.includes("{") || thinkSoFar.includes("{");
+          if (hasJson) {
+            if (hasCompleteJSON(respSoFar) || hasCompleteJSON(thinkSoFar)) {
+              this._streamDone = true;
+              return true;
+            }
+          }
+
+          stoppedPrematurely = true;
+          return true;
+        }
+
+        if (
+          (this._thinkingChunks.length || this._responseChunks.length) &&
+          Date.now() - lastDataTime > IDLE_TIMEOUT_MS
+        ) {
+          this._streamDone = true;
+          return true;
+        }
+        return false;
+      };
+
+      while (!this._streamDone && !checkDone()) {
+        await new Promise((r) => setTimeout(r, 100));
+        const thinkSoFar = this._thinkingChunks.join("");
+        const respSoFar = this._responseChunks.join("");
+
+        if (!firstChunkSeen && (thinkSoFar || respSoFar)) {
+          firstChunkSeen = true;
+          if (onStartCalled) onStartCalled();
+        }
+
+        if (firstChunkSeen) {
+          if (!this._thinkingStartTime && thinkSoFar) {
+            this._thinkingStartTime = Date.now();
+          }
+
+          const currentLen = thinkSoFar.length + respSoFar.length;
+          if (currentLen > lastLen) {
+            lastDataTime = Date.now();
+            lastLen = currentLen;
+          }
+
+          if (onProgress) {
+            onProgress({
+              thinking: thinkSoFar,
+              text: respSoFar,
+              thinkingStartTime: this._thinkingStartTime,
+              thinkingEndTime: this._thinkingEndTime,
+            });
+          }
+        }
+      }
+
+      if (stoppedPrematurely) {
+        require("fs").appendFileSync(
+          "/tmp/deepseek-cli-debug.log",
+          `[Brain] Attempt ${attempt} stopped prematurely (no data for 3s and incomplete final blocks). Reloading and retrying same prompt...\n`
+        );
+        await page.reload().catch(() => {});
+        await new Promise((r) => setTimeout(r, 3000));
+        continue;
+      }
+
+      if (this._streamBuffer.trim()) this.processNetworkChunk("\n");
       const thinkSoFar = this._thinkingChunks.join("");
       const respSoFar = this._responseChunks.join("");
+      if (thinkSoFar && this._thinkingStartTime) this._thinkingEndTime = Date.now();
 
-      if (!firstChunkSeen && (thinkSoFar || respSoFar)) {
-        firstChunkSeen = true;
-        if (onStartCalled) onStartCalled();
+      if (onProgress) {
+        onProgress({
+          thinking: thinkSoFar,
+          text: respSoFar,
+          thinkingStartTime: this._thinkingStartTime,
+          thinkingEndTime: this._thinkingEndTime,
+        });
       }
 
-      if (firstChunkSeen) {
-        if (!this._thinkingStartTime && thinkSoFar) {
-          this._thinkingStartTime = Date.now();
+      return { thinkingText: thinkSoFar, responseText: respSoFar };
+    }
+
+    throw new Error("DeepSeek failed to complete generation after multiple attempts.");
+  }
+}
+
+function hasCompleteJSON(text) {
+  if (!text || !text.includes("{")) return false;
+  const lastBrace = text.lastIndexOf("}");
+  if (lastBrace === -1) return false;
+  const firstBrace = text.indexOf("{");
+  const candidate = text.substring(firstBrace, lastBrace + 1);
+  try {
+    JSON.parse(candidate);
+    return true;
+  } catch {
+    let depth = 0;
+    let inString = false;
+    let escape = false;
+    for (let i = firstBrace; i <= lastBrace; i++) {
+      const char = text[i];
+      if (escape) {
+        escape = false;
+        continue;
+      }
+      if (char === "\\") {
+        escape = true;
+        continue;
+      }
+      if (char === '"') {
+        inString = !inString;
+        continue;
+      }
+      if (!inString) {
+        if (char === "{") depth++;
+        else if (char === "}") {
+          depth--;
+          if (depth === 0) {
+            try {
+              JSON.parse(text.substring(firstBrace, i + 1));
+              return true;
+            } catch {}
+          }
         }
-        if (onProgress) {
-          onProgress({
-            thinking: thinkSoFar,
-            text: respSoFar,
-            thinkingStartTime: this._thinkingStartTime,
-            thinkingEndTime: this._thinkingEndTime,
-          });
-        }
-        lastDataTime = Date.now();
       }
     }
-
-    if (this._streamBuffer.trim()) this.processNetworkChunk("\n");
-    const thinkSoFar = this._thinkingChunks.join("");
-    const respSoFar = this._responseChunks.join("");
-    if (thinkSoFar && this._thinkingStartTime) this._thinkingEndTime = Date.now();
-
-    if (onProgress) {
-      onProgress({
-        thinking: thinkSoFar,
-        text: respSoFar,
-        thinkingStartTime: this._thinkingStartTime,
-        thinkingEndTime: this._thinkingEndTime,
-      });
-    }
-
-    return { thinkingText: thinkSoFar, responseText: respSoFar };
+    return false;
   }
 }
 

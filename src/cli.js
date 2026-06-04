@@ -1,4 +1,5 @@
 const fs = require("fs");
+const keyword_extractor = require("keyword-extractor");
 const path = require("path");
 const os = require("os");
 const tui = require("./tui");
@@ -20,8 +21,58 @@ process.on("unhandledRejection", (reason) => {
     tui.stopGlobalSpinner();
     tui.renderLog();
   }
-  console.error("Unhandled rejection:", reason);
+  fs.appendFileSync(
+    "/tmp/deepseek-cli-debug.log",
+    `[cli] Unhandled Rejection: ${reason && reason.stack ? reason.stack : reason}\n`
+  );
 });
+
+function generateLocalTriggers(pkg, serverName) {
+  const words = new Set();
+  words.add(serverName.toLowerCase());
+
+  const cleanPkg = pkg.toLowerCase().replace(/@/g, '').replace(/\//g, '-');
+  const parts = cleanPkg.split('-');
+  for (const part of parts) {
+    if (part.length > 3 && part !== 'server' && part !== 'protocol' && part !== 'modelcontextprotocol') {
+      words.add(part);
+    }
+  }
+
+  if (serverName.includes('-')) {
+    serverName.split('-').forEach(p => {
+      if (p.length > 3) words.add(p);
+    });
+  }
+  if (serverName.includes('_')) {
+    serverName.split('_').forEach(p => {
+      if (p.length > 3) words.add(p);
+    });
+  }
+
+  return Array.from(words);
+}
+
+async function generateKeywordTriggers(pkg, serverName) {
+  const localTriggers = generateLocalTriggers(pkg, serverName);
+  const textToExtract = `${pkg.replace(/@/g, '').replace(/\//g, ' ')} ${serverName.replace(/[-_]/g, ' ')}`;
+  
+  const extracted = keyword_extractor.extract(textToExtract, {
+    language: "english",
+    remove_digits: true,
+    return_changed_case: true,
+    remove_duplicates: true
+  });
+  
+  const merged = new Set([...localTriggers]);
+  extracted.forEach(word => {
+    if (word.length > 3 && word !== 'server' && word !== 'protocol' && word !== 'modelcontextprotocol') {
+      merged.add(word);
+    }
+  });
+
+  return Array.from(merged);
+}
 
 // ── key bindings ──────────────────────────────────────────────────────────────
 tui.input.key(["pageup"], () => tui.scrollUp());
@@ -31,10 +82,13 @@ tui.input.key(["S-down"], () => tui.scrollDown(3));
 tui.input.key(["C-u"], () => tui.scrollUp());
 tui.input.key(["C-d"], () => tui.scrollDown());
 
-tui.input.key("enter", () => {
+tui.input.on("submit", async (val) => {
   if (orchestrator.isBusy()) return;
-  const val = tui.input.getValue().trim();
-  if (!val) return;
+  val = (val || "").trim();
+  if (!val) {
+    tui.refocusInput();
+    return;
+  }
   tui.input.clearValue();
   tui.scr.render();
 
@@ -50,12 +104,14 @@ tui.input.key("enter", () => {
         }
         logItems.push({ type: "error", message: "No saved sessions found. Start a new conversation by typing a prompt." });
         tui.renderLog();
+        tui.refocusInput();
       }
     } catch (err) {
       fs.appendFileSync(
         "/tmp/deepseek-cli-debug.log",
         `[cli] ERROR: ${err.stack}\n`
       );
+      tui.refocusInput();
     }
     return;
   }
@@ -65,8 +121,7 @@ tui.input.key("enter", () => {
     setCurrentSessionId(null);
     tui.setTopBarTitle("new session");
     tui.renderLog();
-    tui.input.focus();
-    tui.scr.render();
+    tui.refocusInput();
 
     const brain = brainRegistry.getActiveBrain();
     if (brain && brain.id === "deepseek-web") {
@@ -87,7 +142,7 @@ tui.input.key("enter", () => {
       const logItems = tui.getLogItems();
       logItems.push({ type: "error", message: "Usage: /install-workflow <raw-github-url>" });
       tui.renderLog();
-      setImmediate(() => { tui.input.focus(); tui.scr.render(); });
+      tui.refocusInput();
       return;
     }
     const logItems = tui.getLogItems();
@@ -107,7 +162,7 @@ tui.input.key("enter", () => {
       logItems.push({ type: "error", message: `Failed to download: ${err.message}` });
     }
     tui.renderLog();
-    setImmediate(() => { tui.input.focus(); tui.scr.render(); });
+    tui.refocusInput();
     return;
   }
 
@@ -118,7 +173,7 @@ tui.input.key("enter", () => {
       const logItems = tui.getLogItems();
       logItems.push({ type: "error", message: "Usage: /install-mcp <server-name> <npx-package> [extra-args...]" });
       tui.renderLog();
-      setImmediate(() => { tui.input.focus(); tui.scr.render(); });
+      tui.refocusInput();
       return;
     }
     const [serverName, pkg, ...extraArgs] = parts;
@@ -130,19 +185,24 @@ tui.input.key("enter", () => {
       if (config.mcpServers[serverName]) {
         logItems.push({ type: "error", message: `MCP server '${serverName}' already exists. Remove it from mcp.json first.` });
         tui.renderLog();
+        tui.refocusInput();
         return;
       }
+      
+      const triggers = await generateKeywordTriggers(pkg, serverName);
+
       config.mcpServers[serverName] = {
         command: "npx",
         args: ["-y", pkg, ...extraArgs],
+        triggers: triggers,
       };
       fs.writeFileSync(mcpConfigPath, JSON.stringify(config, null, 2));
-      logItems.push({ type: "status", text: `Installed MCP server '${serverName}' (${pkg}). Restart ds to activate.` });
+      logItems.push({ type: "status", text: `Installed MCP server '${serverName}' (${pkg}) with triggers: ${triggers.join(', ')}. Restart ds to activate.` });
     } catch (err) {
       logItems.push({ type: "error", message: `Failed: ${err.message}` });
     }
     tui.renderLog();
-    setImmediate(() => { tui.input.focus(); tui.scr.render(); });
+    tui.refocusInput();
     return;
   }
 
@@ -174,7 +234,7 @@ tui.input.key("enter", () => {
     }
     logItems.push({ type: "deepseek", text: output, spinning: false });
     tui.renderLog();
-    setImmediate(() => { tui.input.focus(); tui.scr.render(); });
+    tui.refocusInput();
     return;
   }
 
@@ -200,7 +260,7 @@ tui.input.key("enter", () => {
       logItems.push({ type: "error", message: `Failed: ${err.message}` });
     }
     tui.renderLog();
-    setImmediate(() => { tui.input.focus(); tui.scr.render(); });
+    tui.refocusInput();
     return;
   }
 
@@ -221,7 +281,7 @@ tui.input.key("enter", () => {
       spinning: false,
     });
     tui.renderLog();
-    setImmediate(() => { tui.input.focus(); tui.scr.render(); });
+    tui.refocusInput();
     return;
   }
 
@@ -290,6 +350,7 @@ async function loadSessionIntoTUI(session) {
     brain.onSessionLoad(session).catch(() => {});
   }
 }
+
 
 function main() {
   initHistory();

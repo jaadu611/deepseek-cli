@@ -1,76 +1,57 @@
-const fs = require('fs').promises;
+const fs = require('fs');
 const path = require('path');
-const { getBackupsPath } = require('../utils/config');
-const { isPathAllowed, getPermissionErrorPath } = require('../utils/permissions');
 
 module.exports = {
   name: "patch_file",
-  description: "Modifies an existing file by replacing a specific string block with a new string block. Backup is saved to ds_config/backups/.",
+  description: "Safely modifies an existing file. PREFERRED METHOD: Use start_line + end_line + new_content for precise edits. FALLBACK: Use find_string + replace_string ONLY for tiny, unique changes. ALWAYS call read_file first to get current line numbers. Creates a .bak backup automatically.",
   parameters: {
     type: "object",
     properties: {
-      path: { type: "string", description: "The path to the file to modify." },
-      find_string: { type: "string", description: "The exact current text block to replace. Must be unique." },
-      replace_string: { type: "string", description: "The new text block to insert." },
-      create_backup: { type: "boolean", description: "Create a backup before modifying (default true)." }
+      path: { type: "string", description: "File path to modify." },
+      start_line: { type: "integer", description: "PREFERRED: 1-based start line of the block to replace." },
+      end_line: { type: "integer", description: "PREFERRED: 1-based end line (inclusive) of the block to replace." },
+      new_content: { type: "string", description: "The replacement content (used with start_line/end_line)." },
+      find_string: { type: "string", description: "FALLBACK: Exact text to find (include surrounding context for uniqueness)." },
+      replace_string: { type: "string", description: "FALLBACK: Text to replace find_string with." }
     },
-    required: ["path", "find_string", "replace_string"]
+    required: ["path"]
   },
-  async execute({ path: filePath, find_string, replace_string, create_backup = true }) {
+  async execute(params) {
+    const { path: filePath, start_line, end_line, new_content, find_string, replace_string } = params;
     try {
-      if (!filePath || typeof filePath !== 'string' || filePath.trim() === '') {
-        return 'Error: Required parameter "path" is missing or empty. Provide a valid file path.';
+      const resolved = path.resolve(filePath);
+      if (!fs.existsSync(resolved)) return `Error: File not found: ${resolved}`;
+      
+      const content = fs.readFileSync(resolved, 'utf8');
+      const lines = content.split('\n');
+      
+      // STRATEGY 1: Line Range (Most Robust)
+      if (start_line && end_line && new_content !== undefined) {
+        if (start_line < 1 || end_line > lines.length || start_line > end_line) {
+          return `Error: Line range ${start_line}-${end_line} is invalid. File has ${lines.length} lines. Call read_file to verify.`;
+        }
+        fs.writeFileSync(resolved + '.bak', content, 'utf8');
+        const newLines = new_content.split('\n');
+        lines.splice(start_line - 1, end_line - start_line + 1, ...newLines);
+        fs.writeFileSync(resolved, lines.join('\n'), 'utf8');
+        return `✅ Patched lines ${start_line}-${end_line} successfully. Backup saved as ${resolved}.bak`;
       }
-      if (!find_string || typeof find_string !== 'string' || find_string.length === 0) {
-        return 'Error: Required parameter "find_string" is missing or invalid.';
+      
+      // STRATEGY 2: Unique String Match (Fallback for tiny edits)
+      if (find_string && replace_string !== undefined) {
+        const occurrences = content.split(find_string).length - 1;
+        if (occurrences === 0) {
+          return `❌ find_string not found. The file may have changed. Call read_file to get fresh content and line numbers, then retry with start_line/end_line.`;
+        }
+        if (occurrences > 1) {
+          return `❌ find_string matched ${occurrences} times. Include more surrounding context OR use start_line/end_line instead.`;
+        }
+        fs.writeFileSync(resolved + '.bak', content, 'utf8');
+        fs.writeFileSync(resolved, content.replace(find_string, replace_string), 'utf8');
+        return `✅ String replacement successful. Backup saved as ${resolved}.bak`;
       }
-      if (replace_string === undefined || replace_string === null) {
-        return 'Error: Required parameter "replace_string" is missing or invalid.';
-      }
-
-      const resolvedPath = path.resolve(filePath);
-      if (!isPathAllowed(resolvedPath)) {
-        return getPermissionErrorPath(resolvedPath);
-      }
-
-      let stats;
-      try {
-        stats = await fs.stat(resolvedPath);
-      } catch {
-        return `Error: File does not exist at ${resolvedPath}`;
-      }
-
-      if (stats.isDirectory()) {
-        return `Error: Path is a directory, not a file: ${resolvedPath}`;
-      }
-
-      if (stats.size > 5 * 1024 * 1024) {
-        return `Error: File too large (${(stats.size/1024/1024).toFixed(1)}MB). patch_file only supports files < 5MB.`;
-      }
-
-      const content = await fs.readFile(resolvedPath, 'utf8');
-      const occurrences = content.split(find_string).length - 1;
-      if (occurrences === 0) {
-        return `Error: Could not find the exact find_string in the file. Make sure spaces and line endings match perfectly.`;
-      }
-      if (occurrences > 1) {
-        return `Error: The find_string matches ${occurrences} places in the file. Provide more surrounding context to make it unique.`;
-      }
-
-      if (create_backup) {
-        const backupDir = getBackupsPath();
-        const backupName = `${path.basename(resolvedPath)}.${Date.now()}.bak`;
-        const backupPath = path.join(backupDir, backupName);
-        await fs.writeFile(backupPath, content, 'utf8');
-      }
-
-      const lineNumber = content.slice(0, content.indexOf(find_string)).split('\n').length;
-      const updatedContent = content.replace(find_string, replace_string);
-      await fs.writeFile(resolvedPath, updatedContent, 'utf8');
-
-      const removedLines = find_string.split('\n').length;
-      const addedLines = replace_string.split('\n').length;
-      return `[Success] File patched successfully at ${resolvedPath}\n- Line Modified: ~${lineNumber}\n- Lines Removed: ${removedLines}\n- Lines Added: ${addedLines}`;
+      
+      return `Error: Provide either (start_line + end_line + new_content) OR (find_string + replace_string).`;
     } catch (err) {
       return `Error patching file: ${err.message}`;
     }

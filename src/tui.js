@@ -6,22 +6,22 @@ const fg = (r, g, b) => `\x1b[38;2;${r};${g};${b}m`;
 const bg = (r, g, b) => `\x1b[48;2;${r};${g};${b}m`;
 
 const C = {
-  body: fg(210, 210, 210),
-  dim: fg(90, 90, 90),
-  dimmer: fg(58, 58, 58),
-  muted: fg(130, 130, 130),
+  body: fg(220, 220, 225),
+  dim: fg(130, 130, 130),
+  dimmer: fg(85, 85, 85),
+  muted: fg(150, 150, 150),
   bold: fg(255, 255, 255),
-  italic: fg(155, 155, 155),
-  code: fg(200, 230, 200),
-  accent: fg(82, 196, 196),
-  accentB: fg(48, 140, 140),
-  you: fg(82, 196, 196),
-  ai: fg(190, 190, 190),
-  think: fg(88, 88, 88),
-  tool: fg(110, 120, 100),
-  err: fg(200, 80, 80),
-  sep: fg(45, 45, 45),
-  codeBorder: fg(60, 60, 60),
+  italic: fg(170, 170, 170),
+  code: fg(190, 235, 190),
+  accent: fg(6, 182, 212),
+  accentB: fg(8, 145, 178),
+  you: fg(6, 182, 212),
+  ai: fg(220, 220, 225),
+  think: fg(180, 140, 80),
+  tool: fg(52, 211, 153),
+  err: fg(248, 113, 113),
+  sep: fg(48, 48, 48),
+  codeBorder: fg(75, 75, 75),
 };
 
 const FRAMES = ["⠁", "⠂", "⠄", "⡀", "⢀", "⠠", "⠐", "⠈"];
@@ -29,19 +29,80 @@ const FRAMES = ["⠁", "⠂", "⠄", "⡀", "⢀", "⠠", "⠐", "⠈"];
 // ── wrapping ──────────────────────────────────────────────────────────────────
 function wrapText(text, limit) {
   if (!text) return [""];
-  const words = text.split(" ");
-  const lines = [];
-  let cur = "";
-  for (const w of words) {
-    if (cur.length + w.length > limit) {
-      lines.push(cur.trimEnd());
-      cur = w + " ";
-    } else {
-      cur += w + " ";
+  const inputLines = text.split("\n");
+  const outputLines = [];
+  for (const line of inputLines) {
+    if (line === "") {
+      outputLines.push("");
+      continue;
+    }
+    const words = line.split(" ");
+    let cur = "";
+    for (const w of words) {
+      if (cur.length + w.length > limit) {
+        outputLines.push(cur.trimEnd());
+        cur = w + " ";
+      } else {
+        cur += w + " ";
+      }
+    }
+    if (cur) outputLines.push(cur.trimEnd());
+  }
+  return outputLines.length ? outputLines : [""];
+}
+
+// ── tool parameter formatter ─────────────────────────────────────────────────
+function formatToolParams(name, params) {
+  if (!params || typeof params !== "object") return "";
+  const parts = [];
+
+  const rawPath = params.path || params.filePath || params.AbsolutePath || params.TargetFile || params.SearchPath || params.DirectoryPath || "";
+  const basename = typeof rawPath === "string" && rawPath ? rawPath.split("/").pop() : "";
+
+  if (name === "read_file" || name === "view_file") {
+    if (basename) parts.push(`path: ${basename}`);
+    const start = params.start_line || params.StartLine;
+    const end = params.end_line || params.EndLine;
+    if (start !== undefined && end !== undefined) parts.push(`lines: ${start}-${end}`);
+    else if (start !== undefined) parts.push(`line: ${start}`);
+    const offset = params.offset;
+    if (offset !== undefined) parts.push(`offset: ${offset}`);
+  } else if (name === "write_file" || name === "write_to_file") {
+    if (basename) parts.push(`path: ${basename}`);
+  } else if (name === "patch_file" || name === "multi_patch_file" || name === "replace_file_content" || name === "multi_replace_file_content") {
+    if (basename) parts.push(`path: ${basename}`);
+  } else if (name === "execute_shell_command" || name === "run_command") {
+    const cmd = params.command || params.CommandLine || "";
+    if (cmd) {
+      const displayCmd = cmd.length > 25 ? cmd.substring(0, 22) + "..." : cmd;
+      parts.push(`cmd: "${displayCmd}"`);
+    }
+  } else if (name === "grep_search") {
+    const q = params.query || params.Query || "";
+    if (q) parts.push(`query: "${q}"`);
+    if (basename) parts.push(`in: ${basename}`);
+  } else if (name === "glob_search") {
+    const pattern = params.pattern || params.Query || "";
+    if (pattern) parts.push(`pattern: "${pattern}"`);
+  } else if (name === "list_directory" || name === "list_dir") {
+    if (basename) parts.push(`path: ${basename}`);
+    else if (rawPath === "/" || rawPath === "." || rawPath === "./") parts.push(`path: ${rawPath}`);
+  } else if (name === "manage_task" || name === "manage_plan") {
+    const action = params.Action || params.action || "";
+    if (action) parts.push(`action: ${action}`);
+    const taskId = params.TaskId || params.task_id || "";
+    if (taskId) parts.push(`id: ${taskId}`);
+  } else {
+    // Generic fallback for any other tools
+    const keys = Object.keys(params).filter(k => typeof params[k] === "string" || typeof params[k] === "number" || typeof params[k] === "boolean");
+    for (const k of keys.slice(0, 2)) {
+      const val = String(params[k]);
+      const displayVal = val.length > 20 ? val.substring(0, 17) + "..." : val;
+      parts.push(`${k}: ${displayVal}`);
     }
   }
-  if (cur) lines.push(cur.trimEnd());
-  return lines.length ? lines : [""];
+
+  return parts.length ? `(${parts.join(", ")})` : "";
 }
 
 // ── inline markdown (single-line) ────────────────────────────────────────────
@@ -206,21 +267,25 @@ const input = blessed.textbox({
   right: 0,
   height: 3,
   inputOnFocus: true,
-  padding: { left: 4, right: 3 },
+  padding: { left: 2, right: 3 },
+  placeholder: " Type a message or command... ",
   style: {
     bg: "default",
-    fg: "#c8c8c8",
-    border: { fg: "#1e1e1e" },
-    focus: { border: { fg: "#3a3a3a" } },
+    fg: "#e4e4e7",
+    border: { fg: "#27272a" },
+    focus: { border: { fg: "#06b6d4" } },
   },
   border: { type: "line" },
 });
 
+
+
+input.key(["escape"], () => {
+  // Ignore escape to prevent default blessed cancellation/lockup behavior
+});
+
 input.on("cancel", () => {
-  (global.setImmediate || process.nextTick)(() => {
-    input.focus();
-    scr.render();
-  });
+  refocusInput();
 });
 
 scr.append(topBar);
@@ -229,8 +294,9 @@ scr.append(inputSep);
 scr.append(input);
 
 function setTopBarTitle(title) {
-  const truncated = title && title.length > 60 ? title.slice(0, 57) + "…" : title || "deepseek";
-  topBar.setContent(C.dimmer + "  " + truncated + R);
+  const cwd = process.cwd();
+  const truncated = title && title.length > 50 ? title.slice(0, 47) + "…" : title || "deepseek";
+  topBar.setContent(C.dimmer + "  " + truncated + R + C.dim + " (" + cwd + ")" + R);
   scr.render();
 }
 
@@ -269,99 +335,124 @@ function stopGlobalSpinner() {
 
 // ── render ────────────────────────────────────────────────────────────────────
 function renderLog() {
-  const lines = [];
-  lineToItem = [];
+  try {
+    const lines = [];
+    lineToItem = [];
 
-  for (let idx = 0; idx < logItems.length; idx++) {
-    const item = logItems[idx];
-    const itemLines = [];
+    for (let idx = 0; idx < logItems.length; idx++) {
+      const item = logItems[idx];
+      let itemLines = [];
+      try {
+        if (item.type === "user") {
+          const limit = Math.max(20, (chat.width || scr.width || 80) - 9);
+          const wrapped = wrapText(item.text, limit);
+          itemLines.push(C.you + "  ›  " + R + C.body + wrapped[0] + R);
+          for (let i = 1; i < wrapped.length; i++)
+            itemLines.push("     " + C.body + wrapped[i] + R);
+        } else if (item.type === "deepseek") {
+          if (!item.text && !item.thinking && item.spinning) {
+            itemLines.push(C.dimmer + "  " + FRAMES[spinFrame % FRAMES.length] + R);
+          } else {
+            const limit = Math.max(20, (chat.width || scr.width || 80) - 7);
 
-    if (item.type === "user") {
-      const limit = Math.max(20, (chat.width || scr.width || 80) - 9);
-      const wrapped = wrapText(item.text, limit);
-      itemLines.push(C.you + "  ›  " + R + C.body + wrapped[0] + R);
-      for (let i = 1; i < wrapped.length; i++)
-        itemLines.push("     " + C.body + wrapped[i] + R);
-    } else if (item.type === "deepseek") {
-      if (!item.text && !item.thinking && item.spinning) {
-        itemLines.push(C.dimmer + "  " + FRAMES[spinFrame % FRAMES.length] + R);
-      } else {
-        const limit = Math.max(20, (chat.width || scr.width || 80) - 7);
+            if (item.thinking) {
+              if (item.expanded) {
+                const thLines = wrapText(item.thinking, limit - 4);
+                for (let i = 0; i < thLines.length; i++) {
+                  itemLines.push(C.think + "  ┆ " + R + C.think + thLines[i] + R);
+                }
+              } else {
+                const endT = item._thinkingEndTime || Date.now();
+                const elapsed = item._thinkingStartTime
+                  ? Math.round((endT - item._thinkingStartTime) / 1000)
+                  : 0;
+                const label = elapsed > 0 ? `thought ${elapsed}s` : "thought";
+                itemLines.push(C.dimmer + "  ┆ " + C.think + "\x1b[3m" + label + " ▸" + R);
+              }
+            }
 
-        if (item.thinking) {
-          if (item.expanded) {
-            const thLines = wrapText(item.thinking, limit - 4);
-            for (let i = 0; i < thLines.length; i++) {
-              itemLines.push(C.think + "  ┆ " + R + C.think + thLines[i] + R);
+            if (item.text) {
+              const rendered = renderMd(item.text);
+              const hasThink = !!item.thinking;
+              for (let i = 0; i < rendered.length; i++) {
+                if (i === 0 && !hasThink) {
+                  itemLines.push(C.accentB + "  ● " + R + rendered[i]);
+                } else if (hasThink) {
+                  itemLines.push(C.think + "  ┆ " + R + rendered[i]);
+                } else {
+                  itemLines.push("    " + rendered[i]);
+                }
+              }
+            }
+          }
+        } else if (item.type === "tool") {
+          // Note: formatToolParams returns string starting with ( and ending with )
+          const displayParams = item.params ? " " + C.dim + formatToolParams(item.name, item.params) + R : "";
+
+          if (item.status === "executing") {
+            itemLines.push(
+              C.dimmer +
+                "  " +
+                FRAMES[spinFrame % FRAMES.length] +
+                " " +
+                C.tool +
+                item.name +
+                R +
+                displayParams +
+                C.dimmer +
+                " …" +
+                R
+            );
+          } else if (item.expanded) {
+            itemLines.push(C.tool + "  ⊟ " + R + C.muted + item.name + R + displayParams);
+            if (item.result) {
+              const rLines = item.result.toString().split("\n");
+              const maxShow = Math.min(50, rLines.length);
+              for (let i = 0; i < maxShow; i++)
+                itemLines.push(C.dimmer + "  │ " + R + C.dim + rLines[i] + R);
+              if (rLines.length > maxShow)
+                itemLines.push(
+                  C.dimmer + "  │ " + R + C.dimmer + `… +${rLines.length - maxShow} lines` + R
+                );
             }
           } else {
-            const endT = item._thinkingEndTime || Date.now();
-            const elapsed = item._thinkingStartTime
-              ? Math.round((endT - item._thinkingStartTime) / 1000)
-              : 0;
-            const label = elapsed > 0 ? `thought ${elapsed}s` : "thought";
-            itemLines.push(C.dimmer + "  ┆ " + C.think + "\x1b[3m" + label + " ▸" + R);
+            itemLines.push(C.tool + "  ⊞ " + R + C.dim + item.name + R + displayParams + C.dimmer + " ▸" + R);
           }
+        } else if (item.type === "separator") {
+          itemLines.push("");
+        } else if (item.type === "divider") {
+          const w = Math.max(10, (chat.width || scr.width || 80) - 8);
+          itemLines.push("   " + C.sep + "─".repeat(w) + R);
+        } else if (item.type === "error") {
+          itemLines.push(C.err + "  ✕ " + R + C.muted + item.message + R);
+        } else if (item.type === "status") {
+          itemLines.push(C.dimmer + "  " + FRAMES[spinFrame % FRAMES.length] + " " + C.muted + item.text + R);
         }
 
-        if (item.text) {
-          const rendered = renderMd(item.text);
-          const hasThink = !!item.thinking;
-          for (let i = 0; i < rendered.length; i++) {
-            if (i === 0 && !hasThink) itemLines.push(C.accentB + "  ● " + R + rendered[i]);
-            else itemLines.push("    " + rendered[i]);
-          }
+        for (const l of itemLines) {
+          lines.push(l);
+          lineToItem.push(item);
+        }
+      } catch (innerErr) {
+        const fs = require('fs');
+        fs.appendFileSync('/tmp/deepseek-cli-crash.log', `renderLog inner error for item ${idx}: ${innerErr.stack}\nItem: ${JSON.stringify(item)}\n`);
+        itemLines = [C.err + `  ✕ Error rendering item ${idx}` + R];
+        for (const l of itemLines) {
+          lines.push(l);
+          lineToItem.push(item);
         }
       }
-    } else if (item.type === "tool") {
-      if (item.status === "executing") {
-        itemLines.push(
-          C.dimmer +
-            "  " +
-            FRAMES[spinFrame % FRAMES.length] +
-            " " +
-            C.tool +
-            item.name +
-            R +
-            C.dimmer +
-            " …" +
-            R
-        );
-      } else if (item.expanded) {
-        itemLines.push(C.tool + "  ⊟ " + R + C.muted + item.name + R);
-        if (item.result) {
-          const rLines = item.result.toString().split("\n");
-          const maxShow = Math.min(50, rLines.length);
-          for (let i = 0; i < maxShow; i++)
-            itemLines.push(C.dimmer + "  │ " + R + C.dim + rLines[i] + R);
-          if (rLines.length > maxShow)
-            itemLines.push(
-              C.dimmer + "  │ " + R + C.dimmer + `… +${rLines.length - maxShow} lines` + R
-            );
-        }
-      } else {
-        itemLines.push(C.tool + "  ⊞ " + R + C.dim + item.name + R + C.dimmer + " ▸" + R);
-      }
-    } else if (item.type === "separator") {
-      itemLines.push("");
-    } else if (item.type === "divider") {
-      const w = Math.max(10, (chat.width || scr.width || 80) - 8);
-      itemLines.push("   " + C.sep + "─".repeat(w) + R);
-    } else if (item.type === "error") {
-      itemLines.push(C.err + "  ✕ " + R + C.muted + item.message + R);
-    } else if (item.type === "status") {
-      itemLines.push(C.dimmer + "  " + FRAMES[spinFrame % FRAMES.length] + " " + C.muted + item.text + R);
     }
 
-    for (const l of itemLines) {
-      lines.push(l);
-      lineToItem.push(item);
-    }
+    chat.setContent(lines.join("\n"));
+    chat.setScrollPerc(100);
+    scr.render();
+  } catch (outerErr) {
+    const fs = require('fs');
+    fs.appendFileSync('/tmp/deepseek-cli-crash.log', `renderLog outer error: ${outerErr.stack}\n`);
+    chat.setContent(C.err + 'Fatal rendering error. Check /tmp/deepseek-cli-crash.log' + R);
+    scr.render();
   }
-
-  chat.setContent(lines.join("\n"));
-  chat.setScrollPerc(100);
-  scr.render();
 }
 
 chat.on("click", (data) => {
@@ -425,10 +516,7 @@ function showChatHistory(sessions, onSelect) {
 
   const close = () => {
     overlay.destroy();
-    (global.setImmediate || process.nextTick)(() => {
-      input.focus();
-      scr.render();
-    });
+    refocusInput();
   };
   list.on("select", (_, idx) => {
     close();
@@ -436,6 +524,20 @@ function showChatHistory(sessions, onSelect) {
   });
   list.key(["escape"], close);
   overlay.key(["escape"], close);
+}
+
+function refocusInput() {
+  setTimeout(() => {
+    if (input.screen) {
+      if (input.screen.focused !== input) {
+        input.focus();
+      }
+      if (!input._reading) {
+        input.readInput((err, value) => {});
+      }
+      scr.render();
+    }
+  }, 50);
 }
 
 module.exports = {
@@ -462,4 +564,5 @@ module.exports = {
   renderMd,
   wrapText,
   inline,
+  refocusInput,
 };
