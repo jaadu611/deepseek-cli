@@ -551,13 +551,6 @@ async function ask(prompt) {
       }
     }
 
-    // Auto-delete implementation plan and task files on successful completion of task
-    try {
-      const planPath = path.join(__dirname, "..", "..", "implementation_plan.md");
-      const taskPath = path.join(__dirname, "..", "..", "task.md");
-      if (fs.existsSync(planPath)) fs.unlinkSync(planPath);
-      if (fs.existsSync(taskPath)) fs.unlinkSync(taskPath);
-    } catch (err) {}
   } catch (e) {
     if (dsItem?.spinning) {
       dsItem.spinning = false;

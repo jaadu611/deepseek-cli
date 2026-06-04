@@ -132,24 +132,7 @@ function getSystemPrompt(userPrompt) {
     }
   } catch (err) {}
 
-  let activePlanContext = '';
-  let activeTaskContext = '';
 
-  try {
-    const repoRoot = path.join(__dirname, '..', '..');
-    const planPath = path.join(repoRoot, 'implementation_plan.md');
-    if (fs.existsSync(planPath)) {
-      activePlanContext = `\n\n[Active Implementation Plan]:\n${fs.readFileSync(planPath, 'utf8')}`;
-    }
-  } catch { }
-
-  try {
-    const repoRoot = path.join(__dirname, '..', '..');
-    const taskPath = path.join(repoRoot, 'task.md');
-    if (fs.existsSync(taskPath)) {
-      activeTaskContext = `\n\n[Active Checklist/Tasks]:\n${fs.readFileSync(taskPath, 'utf8')}`;
-    }
-  } catch { }
 
 
 
@@ -172,19 +155,19 @@ function getSystemPrompt(userPrompt) {
         if (file.endsWith('.md')) {
           let content = fs.readFileSync(path.join(workflowsDir, file), 'utf8');
           
-          const firstLine = content.split('\n')[0].trim();
-          if (firstLine.startsWith('trigger:')) {
-            if (isGlobal) {
+          if (isGlobal) {
+            const firstLine = content.split('\n')[0].trim();
+            if (firstLine.startsWith('trigger:')) {
               const trigger = firstLine.replace('trigger:', '').trim().toLowerCase();
               const inDeps = trigger && projectDependencies.toLowerCase().includes(trigger);
               const inPrompt = trigger && userPrompt && userPrompt.toLowerCase().includes(trigger);
               if (!inDeps && !inPrompt) {
                 continue;
               }
+              const lines = content.split('\n');
+              lines.shift();
+              content = lines.join('\n');
             }
-            const lines = content.split('\n');
-            lines.shift();
-            content = lines.join('\n');
           }
           
           rules.push(`[Workflow: ${file}]:\n${content}`);
@@ -233,13 +216,11 @@ Parallel independent tools:
 Answer immediately in plain text.
 
 ### Tasks requiring tools:
-1. MANDATORY: Create implementation_plan.md and task.md using manage_plan and manage_task BEFORE making any changes.
-2. Execute steps as JSON tool calls based on your plan.
-3. When you receive the tool result, decide:
-   - Need another tool? -> JSON tool call (update task.md first if helpful)
+1. Execute steps as JSON tool calls.
+2. When you receive the tool result, decide:
+   - Need another tool? -> JSON tool call
    - Done? -> plain text summary of what was accomplished
-4. Never call a tool and explain yourself in the same response.
-5. Once the task is fully complete and verified, output your final response. The system will automatically delete the implementation_plan.md and task.md files upon successful completion.
+3. Never call a tool and explain yourself in the same response.
 
 # FILE EDITING PROTOCOL (MANDATORY)
 1. BEFORE ANY EDIT: Always call read_file first. Never patch from memory.
@@ -259,7 +240,7 @@ Answer immediately in plain text.
 5. **DEPENDENT STEPS**: Sequential tool calls. Inspect output before the next call.
 6. **INDEPENDENT STEPS**: Batch into the "tools" parallel array.
 7. **SHELL SAFETY**: Always use non-interactive flags (-y, --yes, --noconfirm).
-8. **ON FAILURE**: Update implementation_plan.md with diagnosis, try a new approach. Do not dump debugging noise to the user unless asked.
+8. **ON FAILURE**: Try a new approach. Do not dump debugging noise to the user unless asked.
 9. **MCP PREFERENCE & TOOL DISCOVERY**: For any task requiring external capabilities (such as web browsing, database access, git, or complex APIs), ALWAYS check if a matching MCP server is available or call \`search_tool_registry\` to discover external tools. Prefer dedicated MCP tools over writing custom scripts or running raw shell commands.
 10. **DEEP REASONING**: For complex logic problems, use the sequentialthinking MCP tool instead of reasoning in chat.
 
@@ -269,7 +250,7 @@ Does the task require reading/writing files, running commands, or calling APIs?
 NO  -> Answer in plain Markdown. Stop.
 YES -> Do you have enough information?
         NO  -> Ask one clarifying question. Stop.
-        YES -> Create implementation_plan.md and task.md FIRST, then execute.
+        YES -> Execute.
 
 # SYSTEM ENVIRONMENT
 - OS: ${os.type()} ${os.release()} | Arch: ${os.arch()}
@@ -284,7 +265,7 @@ ${gitContext}
 # CORE TOOLS (* = required, ? = optional)
 ${toolDescriptions}
 
-${activePlanContext}${activeTaskContext}${dynamicRulesContext}`;
+${dynamicRulesContext}`;
 }
 
 module.exports = {

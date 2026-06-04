@@ -10,7 +10,7 @@ function ensureConfigDir() {
   if (!fs.existsSync(DS_CONFIG_DIR)) {
     fs.mkdirSync(DS_CONFIG_DIR, { recursive: true });
   }
-  const subdirs = ['scratch', 'backups', 'sessions'];
+  const subdirs = ['backups', 'sessions'];
   for (const sub of subdirs) {
     const subPath = path.join(DS_CONFIG_DIR, sub);
     if (!fs.existsSync(subPath)) {
@@ -44,19 +44,6 @@ function saveConfig(config) {
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), 'utf8');
 }
 
-function getScratchPath(subpath = '') {
-  ensureConfigDir();
-  const scratchDir = path.join(DS_CONFIG_DIR, 'scratch');
-  if (!fs.existsSync(scratchDir)) fs.mkdirSync(scratchDir, { recursive: true });
-  if (subpath) {
-    const fullPath = path.join(scratchDir, subpath);
-    const dir = path.dirname(fullPath);
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    return fullPath;
-  }
-  return scratchDir;
-}
-
 function getBackupsPath() {
   ensureConfigDir();
   const backupsDir = path.join(DS_CONFIG_DIR, 'backups');
@@ -75,7 +62,6 @@ module.exports = {
   ensureConfigDir,
   loadConfig,
   saveConfig,
-  getScratchPath,
   getBackupsPath,
   getSessionsPath,
   DS_CONFIG_DIR,
