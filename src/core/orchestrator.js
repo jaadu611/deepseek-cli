@@ -26,64 +26,97 @@ function isValidToolCall(normalized) {
   return false;
 }
 
-// ── JSON extraction ───────────────────────────────────────────────────────────
+// Enhanced JSON extraction with markdown code block support and error recovery
 function extractJSON(text) {
   if (!text) return null;
 
   const parsedObjects = [];
-  let i = 0;
-  while (i < text.length) {
-    const startIdx = text.indexOf('{', i);
-    if (startIdx === -1) break;
-
-    let depth = 0;
-    let endIdx = -1;
-    let inString = false;
-    let escape = false;
-
-    for (let j = startIdx; j < text.length; j++) {
-      const char = text[j];
-
-      if (escape) {
-        escape = false;
-        continue;
+  
+  // First, try to extract JSON from markdown code blocks
+  const codeBlockRegex = /```(?:json)?\s*([\s\S]*?)```/g;
+  let match;
+  while ((match = codeBlockRegex.exec(text)) !== null) {
+    const blockContent = match[1].trim();
+    try {
+      const parsed = JSON.parse(blockContent);
+      if (parsed && typeof parsed === 'object') {
+        parsedObjects.push(parsed);
       }
+    } catch (err) {
+      // Not valid JSON, continue
+    }
+  }
 
-      if (char === '\\') {
-        escape = true;
-        continue;
-      }
+  // If no code blocks, do standard extraction
+  if (parsedObjects.length === 0) {
+    let i = 0;
+    while (i < text.length) {
+      const startIdx = text.indexOf('{', i);
+      if (startIdx === -1) break;
 
-      if (char === '"') {
-        inString = !inString;
-        continue;
-      }
+      let depth = 0;
+      let endIdx = -1;
+      let inString = false;
+      let escape = false;
 
-      if (!inString) {
-        if (char === '{') {
-          depth++;
-        } else if (char === '}') {
-          depth--;
-          if (depth === 0) {
-            endIdx = j;
-            break;
+      for (let j = startIdx; j < text.length; j++) {
+        const char = text[j];
+
+        if (escape) {
+          escape = false;
+          continue;
+        }
+
+        if (char === '\\') {
+          escape = true;
+          continue;
+        }
+
+        if (char === '"') {
+          inString = !inString;
+          continue;
+        }
+
+        if (!inString) {
+          if (char === '{') {
+            depth++;
+          } else if (char === '}') {
+            depth--;
+            if (depth === 0) {
+              endIdx = j;
+              break;
+            }
           }
         }
       }
-    }
 
-    if (endIdx !== -1) {
-      const candidate = text.substring(startIdx, endIdx + 1);
-      try {
-        const parsed = JSON.parse(candidate);
-        if (parsed && typeof parsed === 'object') {
-          parsedObjects.push(parsed);
-          i = endIdx + 1;
-          continue;
+      if (endIdx !== -1) {
+        const candidate = text.substring(startIdx, endIdx + 1);
+        try {
+          const parsed = JSON.parse(candidate);
+          if (parsed && typeof parsed === 'object') {
+            parsedObjects.push(parsed);
+            i = endIdx + 1;
+            continue;
+          }
+        } catch (err) {
+          // Try to repair common issues: trailing commas, unquoted keys
+          try {
+            const repaired = candidate
+              .replace(/,\s*}/g, '}')
+              .replace(/,\s*]/g, ']')
+              .replace(/([{,]\s*)([a-zA-Z0-9_]+)(\s*:)/g, '$1"$2"$3');
+            const parsed = JSON.parse(repaired);
+            if (parsed && typeof parsed === 'object') {
+              parsedObjects.push(parsed);
+              i = endIdx + 1;
+              continue;
+            }
+          } catch (e) {}
         }
-      } catch (err) {}
+      }
+      i = startIdx + 1;
     }
-    i = startIdx + 1;
   }
 
   const validToolCalls = [];
@@ -112,6 +145,25 @@ function extractJSON(text) {
 
   if (finalResponse) {
     return finalResponse;
+  }
+
+  // Last resort: if text contains a valid JSON-like structure but we missed it, try to find first { and last }
+  const firstBrace = text.indexOf('{');
+  const lastBrace = text.lastIndexOf('}');
+  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+    const candidate = text.substring(firstBrace, lastBrace + 1);
+    try {
+      const parsed = JSON.parse(candidate);
+      if (parsed && typeof parsed === 'object') {
+        const normalized = normalizeToolCall(parsed);
+        if (isValidToolCall(normalized)) {
+          return normalized;
+        }
+        if (normalized && normalized.response !== undefined) {
+          return normalized;
+        }
+      }
+    } catch (err) {}
   }
 
   return null;
@@ -291,6 +343,14 @@ async function ask(prompt) {
           finalText = String(finalText);
         } else {
           finalText = responseText;
+        }
+
+        // Prevent saving completely empty assistant messages (no content, no thinking)
+        if ((!finalText || finalText.trim() === "") && (!thinkingText || thinkingText.trim() === "")) {
+          const debugPath = "/tmp/deepseek-cli-debug.log";
+          require("fs").appendFileSync(debugPath, `[Orchestrator] Empty assistant message detected - skipping save. responseText length: ${responseText.length}, thinkingText length: ${thinkingText.length}\n`);
+          // Set placeholder to avoid breaking UI, but mark as error
+          finalText = "[Empty response - possible parsing issue]";
         }
 
         dsItem.text = finalText;

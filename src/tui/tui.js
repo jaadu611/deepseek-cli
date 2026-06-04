@@ -284,6 +284,21 @@ input.key(["escape"], () => {
   // Ignore escape to prevent default blessed cancellation/lockup behavior
 });
 
+// Enable left/right arrow movement within input field
+input.key(["left"], () => {
+  if (input.focused) {
+    input.moveCursor(-1, 0);
+    scr.render();
+  }
+});
+
+input.key(["right"], () => {
+  if (input.focused) {
+    input.moveCursor(1, 0);
+    scr.render();
+  }
+});
+
 input.on("cancel", () => {
   refocusInput();
 });
@@ -445,7 +460,6 @@ function renderLog() {
     }
 
     chat.setContent(lines.join("\n"));
-    chat.setScrollPerc(100);
     scr.render();
   } catch (outerErr) {
     const fs = require('fs');

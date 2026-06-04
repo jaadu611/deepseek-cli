@@ -19,6 +19,7 @@ class DeepSeekWebBrain extends BaseBrain {
     this._streamBuffer = "";
     this._thinkingStartTime = null;
     this._thinkingEndTime = null;
+    this._lastStatusCheck = null;
   }
 
   static get id() {
@@ -78,7 +79,7 @@ class DeepSeekWebBrain extends BaseBrain {
       if (!session.deepseek_id) {
         const m = page.url().match(/\/a\/chat\/s\/([a-zA-Z0-9_-]+)/);
         if (m) {
-          const { updateSessionDeepseekId } = require("../../history");
+          const { updateSessionDeepseekId } = require("../../core/history");
           updateSessionDeepseekId(session.id, m[1]);
         }
       }
@@ -216,35 +217,23 @@ class DeepSeekWebBrain extends BaseBrain {
 
     for (let line of lines) {
       line = line.trim();
-      if (!line) continue;
-
-      let jsonStr = line;
-      if (line.startsWith("data:")) {
-        jsonStr = line.substring(5).trim();
-      }
-      if (!jsonStr || jsonStr === "[DONE]") {
-        if (jsonStr === "[DONE]") this._streamDone = true;
+      if (!line.startsWith("data:")) continue;
+      const jsonStr = line.slice(5).trim();
+      if (jsonStr === "[DONE]") {
+        this._streamDone = true;
         continue;
       }
-
       let json;
       try {
         json = JSON.parse(jsonStr);
       } catch {
-        try {
-          json = JSON.parse(line);
-        } catch {
-          continue;
-        }
+        continue;
       }
 
       if (
-        json === "[DONE]" ||
         (json.p === "response/status" && json.v === "FINISHED") ||
         (json.p === "response" && json.v?.quasi_status === "FINISHED") ||
-        json.v?.[0]?.quasi_status === "FINISHED" ||
-        json.quasi_status === "FINISHED" ||
-        json.status === "FINISHED"
+        json.p === "stream_end"
       ) {
         this._streamDone = true;
         continue;
@@ -346,6 +335,22 @@ class DeepSeekWebBrain extends BaseBrain {
     }
   }
 
+  async isGenerationStopped(page) {
+    try {
+      const statusText = await page.evaluate(() => {
+        const assistantMessages = Array.from(document.querySelectorAll('[data-message-role="assistant"]'));
+        if (assistantMessages.length === 0) return null;
+        const lastAssistant = assistantMessages[assistantMessages.length - 1];
+        const statusSpan = lastAssistant.querySelector('span._5255ff8._4d41763');
+        if (!statusSpan) return null;
+        return statusSpan.textContent.trim();
+      });
+      return statusText === "Stopped";
+    } catch (err) {
+      return false;
+    }
+  }
+
   async getCompletionStream(prompt, { onStartCalled, onProgress }) {
     const page = await this.getPage();
     let attempt = 0;
@@ -361,6 +366,7 @@ class DeepSeekWebBrain extends BaseBrain {
       this._streamBuffer = "";
       this._thinkingStartTime = null;
       this._thinkingEndTime = null;
+      this._lastStatusCheck = null;
 
       await this.setupInterceptors(page);
       await this.submitPrompt(page, prompt);
@@ -453,6 +459,14 @@ class DeepSeekWebBrain extends BaseBrain {
             });
           }
         }
+
+
+      }
+
+      // Check DOM for explicit "Stopped" status
+      const explicitlyStopped = await this.isGenerationStopped(page);
+      if (explicitlyStopped) {
+        stoppedPrematurely = true;
       }
 
       if (stoppedPrematurely) {
@@ -500,33 +514,25 @@ function hasCompleteJSON(text) {
     let inString = false;
     let escape = false;
     for (let i = firstBrace; i <= lastBrace; i++) {
-      const char = text[i];
+      const ch = candidate[i - firstBrace];
       if (escape) {
         escape = false;
         continue;
       }
-      if (char === "\\") {
+      if (ch === '\\') {
         escape = true;
         continue;
       }
-      if (char === '"') {
+      if (ch === '"') {
         inString = !inString;
         continue;
       }
       if (!inString) {
-        if (char === "{") depth++;
-        else if (char === "}") {
-          depth--;
-          if (depth === 0) {
-            try {
-              JSON.parse(text.substring(firstBrace, i + 1));
-              return true;
-            } catch {}
-          }
-        }
+        if (ch === '{') depth++;
+        else if (ch === '}') depth--;
       }
     }
-    return false;
+    return depth === 0;
   }
 }
 
