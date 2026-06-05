@@ -164,12 +164,20 @@ class DeepSeekWebBrain extends BaseBrain {
       const { spawn } = require("child_process");
       const path = require("path");
       const os = require("os");
+      let userAgent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+      if (os.platform() === "darwin") {
+        userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+      } else if (os.platform() === "win32") {
+        userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+      }
+
       const child = spawn(
         "chromium",
         [
-          "--headless=true",
+          "--headless=new",
           "--remote-debugging-port=9222",
           "--user-data-dir=" + path.join(os.homedir(), "scraper-profile"),
+          `--user-agent=${userAgent}`,
         ],
         {
           detached: true,
