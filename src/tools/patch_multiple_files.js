@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { getBackupsPath } = require('../utils/config');
+const { getFileDiff } = require('../utils/diff_helper');
 
 module.exports = {
   name: "patch_multiple_files",
@@ -28,6 +29,14 @@ module.exports = {
   },
   async execute({ patches }) {
     const backups = []; // each entry: { original, backupPath }
+    // Lazy Deletion Guard
+    const LAZY_REGEX = /(\/\/|\/\*|\#|\-\-)\s*(\.\.\.|existing|rest|todo\s*:?\s*rest|placeholder|same|remains)/i;
+    for (const p of patches) {
+      if (p.new_content !== undefined && LAZY_REGEX.test(p.new_content)) {
+        return `❌ Atomic patch FAILED. Placeholder comments detected (e.g. "// ... rest of code" / "# ... existing code") in patch for ${p.path}. You must write complete code without placeholders.`;
+      }
+    }
+
     try {
       // Phase 1: Validate all patches before applying any
       for (const p of patches) {
@@ -57,16 +66,22 @@ module.exports = {
       
       // Phase 3: Apply all patches
       const results = [];
+      const diffs = [];
       for (const p of patches) {
         const resolved = path.resolve(p.path);
-        const lines = fs.readFileSync(resolved, 'utf8').split('\n');
+        const originalContent = fs.readFileSync(resolved, 'utf8');
+        const lines = originalContent.split('\n');
         const newLines = p.new_content.split('\n');
         lines.splice(p.start_line - 1, p.end_line - p.start_line + 1, ...newLines);
-        fs.writeFileSync(resolved, lines.join('\n'), 'utf8');
+        const finalContent = lines.join('\n');
+        const diffStr = getFileDiff(resolved, originalContent, finalContent);
+        diffs.push(`[Diff for ${p.path}]:\n${diffStr}`);
+        
+        fs.writeFileSync(resolved, finalContent, 'utf8');
         results.push(`✅ ${p.path}: lines ${p.start_line}-${p.end_line}`);
       }
       
-      return `Atomic patch successful:\n${results.join('\n')}\nBackups saved in ${backupDir}`;
+      return `Atomic patch successful:\n${results.join('\n')}\nBackups saved in ${backupDir}\n\n${diffs.join('\n\n')}`;
     } catch (err) {
       // ROLLBACK on any failure
       for (const b of backups) {

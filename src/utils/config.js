@@ -25,7 +25,8 @@ function loadConfig() {
   const defaults = {
     allowed_directories: [],
     blocked_commands: [],
-    max_tool_output_length: 4000
+    max_tool_output_length: 4000,
+    verification_commands: []
   };
   if (fs.existsSync(CONFIG_PATH)) {
     try {

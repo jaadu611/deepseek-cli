@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { getBackupsPath } = require('../utils/config');
+const { getFileDiff } = require('../utils/diff_helper');
 
 module.exports = {
   name: "patch_file",
@@ -19,6 +20,12 @@ module.exports = {
   },
   async execute(params) {
     const { path: filePath, start_line, end_line, new_content, find_string, replace_string } = params;
+    // Lazy Deletion Guard
+    const LAZY_REGEX = /(\/\/|\/\*|\#|\-\-)\s*(\.\.\.|existing|rest|todo\s*:?\s*rest|placeholder|same|remains)/i;
+    if ((new_content !== undefined && LAZY_REGEX.test(new_content)) || (replace_string !== undefined && LAZY_REGEX.test(replace_string))) {
+      return `❌ Edit rejected: Placeholder comments detected (e.g. "// ... rest of code" / "# ... existing code"). You MUST write the actual code without placeholders.`;
+    }
+
     try {
       const resolved = path.resolve(filePath);
       if (!fs.existsSync(resolved)) return `Error: File not found: ${resolved}`;
@@ -36,8 +43,10 @@ module.exports = {
         fs.writeFileSync(backupPath, content, 'utf8');
         const newLines = new_content.split('\n');
         lines.splice(start_line - 1, end_line - start_line + 1, ...newLines);
-        fs.writeFileSync(resolved, lines.join('\n'), 'utf8');
-        return `✅ Patched lines ${start_line}-${end_line} successfully. Backup saved as ${backupPath}`;
+        const finalContent = lines.join('\n');
+        const diffStr = getFileDiff(resolved, content, finalContent);
+        fs.writeFileSync(resolved, finalContent, 'utf8');
+        return `✅ Patched lines ${start_line}-${end_line} successfully. Backup saved as ${backupPath}\n\n[Line Diff]:\n${diffStr}`;
       }
       
       // STRATEGY 2: Unique String Match (Fallback for tiny edits)
@@ -51,9 +60,10 @@ module.exports = {
         }
         const backupDir = getBackupsPath();
         const backupPath = path.join(backupDir, resolved.replace(/\//g, '_') + '_' + Date.now() + '.bak');
-        fs.writeFileSync(backupPath, content, 'utf8');
-        fs.writeFileSync(resolved, content.replace(find_string, replace_string), 'utf8');
-        return `✅ String replacement successful. Backup saved as ${backupPath}`;
+        const finalContent = content.replace(find_string, replace_string);
+        const diffStr = getFileDiff(resolved, content, finalContent);
+        fs.writeFileSync(resolved, finalContent, 'utf8');
+        return `✅ String replacement successful. Backup saved as ${backupPath}\n\n[Line Diff]:\n${diffStr}`;
       }
       
       return `Error: Provide either (start_line + end_line + new_content) OR (find_string + replace_string).`;

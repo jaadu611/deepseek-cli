@@ -3,6 +3,8 @@ const mcpLoader = require("../mcp/mcp_loader");
 const tui = require("../tui/tui");
 const brainRegistry = require("./brains/registry");
 const { loadConfig } = require("../utils/config");
+const path = require("path");
+const fs = require("fs");
 const {
   getCurrentSessionId,
   createSession,
@@ -177,6 +179,300 @@ function safeTruncate(text) {
   return s.slice(0, maxLength) + `\n\n[truncated: ${s.length - maxLength} chars omitted]`;
 }
 
+function verifyImportsAndExports(filePath) {
+  if (!fs.existsSync(filePath)) return null;
+  const ext = path.extname(filePath).toLowerCase();
+  if (![".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"].includes(ext)) return null;
+
+  const content = fs.readFileSync(filePath, "utf8");
+  const dirname = path.dirname(filePath);
+
+  function resolveRelativePath(importPath) {
+    if (!importPath.startsWith('.') && !importPath.startsWith('/')) return null;
+    let fullPath = path.resolve(dirname, importPath);
+    const extensions = [".js", ".ts", ".jsx", ".tsx", ".mjs", ".cjs"];
+    if (fs.existsSync(fullPath) && fs.statSync(fullPath).isFile()) {
+      return fullPath;
+    }
+    for (const ext of extensions) {
+      if (fs.existsSync(fullPath + ext)) return fullPath + ext;
+    }
+    for (const ext of extensions) {
+      const indexPath = path.join(fullPath, "index" + ext);
+      if (fs.existsSync(indexPath)) return indexPath;
+    }
+    return null;
+  }
+
+  function getExports(targetPath) {
+    if (!fs.existsSync(targetPath)) return new Set();
+    const targetContent = fs.readFileSync(targetPath, "utf8");
+    const exports = new Set();
+
+    const cjsBlockMatch = targetContent.match(/module\.exports\s*=\s*\{([^}]+)\}/);
+    if (cjsBlockMatch) {
+      const items = cjsBlockMatch[1].split(",");
+      for (let item of items) {
+        item = item.trim();
+        const parts = item.split(":");
+        const name = parts[0].trim();
+        if (name && !name.includes("\n")) {
+          exports.add(name.replace(/['"]/g, ""));
+        }
+      }
+    }
+    const cjsAssignRegex = /(?:module\.)?exports\.([a-zA-Z0-9_]+)\s*=/g;
+    let match;
+    while ((match = cjsAssignRegex.exec(targetContent)) !== null) {
+      exports.add(match[1]);
+    }
+
+    const esmRegex = /export\s+(?:const|let|var|function|class|interface|type)\s+([a-zA-Z0-9_]+)/g;
+    while ((match = esmRegex.exec(targetContent)) !== null) {
+      exports.add(match[1]);
+    }
+    const esmBlockRegex = /export\s*\{([^}]+)\}/g;
+    while ((match = esmBlockRegex.exec(targetContent)) !== null) {
+      const items = match[1].split(",");
+      for (let item of items) {
+        item = item.trim();
+        const parts = item.split(/\s+as\s+/);
+        const name = (parts[1] || parts[0]).trim();
+        if (name) exports.add(name);
+      }
+    }
+
+    return exports;
+  }
+
+  const esmImportRegex = /import\s*\{([^}]+)\}\s*from\s*['"]([^'"]+)['"]/g;
+  let match;
+  while ((match = esmImportRegex.exec(content)) !== null) {
+    const importPath = match[2];
+    const resolved = resolveRelativePath(importPath);
+    if (resolved) {
+      const targetExports = getExports(resolved);
+      const importedNames = match[1].split(",").map(n => n.trim().split(/\s+as\s+/)[0].trim());
+      for (const name of importedNames) {
+        if (name && !targetExports.has(name)) {
+          return {
+            success: false,
+            error: `Linker Check Failed: '${name}' is imported in '${path.basename(filePath)}' from '${importPath}', but '${path.basename(resolved)}' does not export it.`
+          };
+        }
+      }
+    }
+  }
+
+  const cjsImportRegex = /(?:const|let|var)\s*\{([^}]+)\}\s*=\s*require\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
+  while ((match = cjsImportRegex.exec(content)) !== null) {
+    const importPath = match[2];
+    const resolved = resolveRelativePath(importPath);
+    if (resolved) {
+      const targetExports = getExports(resolved);
+      const importedNames = match[1].split(",").map(n => {
+        const parts = n.trim().split(":");
+        return (parts[1] || parts[0]).trim();
+      });
+      for (const name of importedNames) {
+        if (name && !name.includes("\n") && !targetExports.has(name)) {
+          return {
+            success: false,
+            error: `Linker Check Failed: '${name}' is required in '${path.basename(filePath)}' from '${importPath}', but '${path.basename(resolved)}' does not export it.`
+          };
+        }
+      }
+    }
+  }
+
+  return { success: true };
+}
+
+async function runAutomaticVerification(modifiedFiles) {
+  const { execSync } = require('child_process');
+  const cwd = process.cwd();
+  const config = loadConfig();
+
+  // 1. Check JS/TS Imports and Exports for mismatches
+  for (const file of modifiedFiles) {
+    const res = verifyImportsAndExports(file);
+    if (res && !res.success) {
+      return res;
+    }
+  }
+
+  // 1. User custom verification commands from config.json
+  if (config.verification_commands && Array.isArray(config.verification_commands)) {
+    for (const cmd of config.verification_commands) {
+      if (!cmd) continue;
+      try {
+        execSync(cmd, { stdio: "pipe", cwd });
+      } catch (err) {
+        const output = (err.stdout ? err.stdout.toString() : "") + "\n" + (err.stderr ? err.stderr.toString() : "");
+        return {
+          success: false,
+          error: `Custom verification command '${cmd}' failed:\n${output || err.message}`
+        };
+      }
+    }
+  }
+
+  // 2. Syntax check modified files
+  for (const file of modifiedFiles) {
+    if (!fs.existsSync(file)) continue;
+    const ext = path.extname(file).toLowerCase();
+    try {
+      if (ext === ".js" || ext === ".cjs" || ext === ".mjs") {
+        execSync(`node --check "${file}"`, { stdio: "pipe" });
+      } else if (ext === ".py") {
+        execSync(`python3 -m py_compile "${file}"`, { stdio: "pipe" });
+      } else if (ext === ".go") {
+        execSync(`go vet "${file}"`, { stdio: "pipe" });
+      } else if (ext === ".ts" || ext === ".tsx") {
+        let tscPath = "tsc";
+        if (fs.existsSync("./node_modules/.bin/tsc")) tscPath = "./node_modules/.bin/tsc";
+        execSync(`${tscPath} --noEmit "${file}"`, { stdio: "pipe" });
+      }
+    } catch (err) {
+      const output = err.stderr ? err.stderr.toString() : err.message;
+      return {
+        success: false,
+        error: `Syntax check failed for ${path.basename(file)}:\n${output}`
+      };
+    }
+  }
+
+  // 3. Project-wide TypeScript compile (tsconfig.json detection)
+  if (fs.existsSync(path.join(cwd, "tsconfig.json"))) {
+    try {
+      let tscPath = "tsc";
+      if (fs.existsSync(path.join(cwd, "node_modules", ".bin", "tsc"))) {
+        tscPath = path.join(cwd, "node_modules", ".bin", "tsc");
+      }
+      execSync(`${tscPath} --noEmit`, { stdio: "pipe", cwd });
+    } catch (err) {
+      const output = (err.stdout ? err.stdout.toString() : "") + "\n" + (err.stderr ? err.stderr.toString() : "");
+      return {
+        success: false,
+        error: `Project-wide TypeScript compilation check failed:\n${output}`
+      };
+    }
+  }
+
+  // 4. Auto-detect and run lint, typecheck, build scripts from package.json
+  if (fs.existsSync(path.join(cwd, "package.json"))) {
+    try {
+      const pkg = JSON.parse(fs.readFileSync(path.join(cwd, "package.json"), "utf8"));
+      if (pkg.scripts) {
+        // Run in this specific order: typecheck, lint, build
+        const autoScripts = ["typecheck", "lint", "build"];
+        for (const scriptName of autoScripts) {
+          if (pkg.scripts[scriptName]) {
+            let cmd = `npm run ${scriptName}`;
+            if (fs.existsSync(path.join(cwd, "pnpm-lock.yaml"))) cmd = `pnpm run ${scriptName}`;
+            else if (fs.existsSync(path.join(cwd, "yarn.lock"))) cmd = `yarn run ${scriptName}`;
+            
+            try {
+              execSync(cmd, { stdio: "pipe", cwd });
+            } catch (err) {
+              const output = (err.stdout ? err.stdout.toString() : "") + "\n" + (err.stderr ? err.stderr.toString() : "");
+              return {
+                success: false,
+                error: `Auto-detected script 'npm run ${scriptName}' failed:\n${output}`
+              };
+            }
+          }
+        }
+      }
+    } catch (e) {}
+  }
+
+  // 5. Run project tests
+  // Node.js
+  if (fs.existsSync(path.join(cwd, "package.json"))) {
+    try {
+      const pkg = JSON.parse(fs.readFileSync(path.join(cwd, "package.json"), "utf8"));
+      if (pkg.scripts && pkg.scripts.test && !pkg.scripts.test.includes("no test specified")) {
+        let cmd = "npm test";
+        if (fs.existsSync(path.join(cwd, "pnpm-lock.yaml"))) cmd = "pnpm test";
+        else if (fs.existsSync(path.join(cwd, "yarn.lock"))) cmd = "yarn test";
+        
+        const output = execSync(cmd, { stdio: "pipe", cwd });
+        return { success: true, message: `All verification checks and tests passed.` };
+      }
+    } catch (err) {
+      const output = (err.stdout ? err.stdout.toString() : "") + "\n" + (err.stderr ? err.stderr.toString() : "");
+      return {
+        success: false,
+        error: `Test suite execution failed (npm test):\n${output}`
+      };
+    }
+  }
+
+  // Go
+  if (fs.existsSync(path.join(cwd, "go.mod"))) {
+    try {
+      execSync("go test ./...", { stdio: "pipe", cwd });
+      return { success: true, message: "All verification checks and tests passed." };
+    } catch (err) {
+      const output = (err.stdout ? err.stdout.toString() : "") + "\n" + (err.stderr ? err.stderr.toString() : "");
+      return {
+        success: false,
+        error: `Test suite execution failed (go test):\n${output}`
+      };
+    }
+  }
+
+  // Rust
+  if (fs.existsSync(path.join(cwd, "Cargo.toml"))) {
+    try {
+      execSync("cargo test", { stdio: "pipe", cwd });
+      return { success: true, message: "All verification checks and tests passed." };
+    } catch (err) {
+      const output = (err.stdout ? err.stdout.toString() : "") + "\n" + (err.stderr ? err.stderr.toString() : "");
+      return {
+        success: false,
+        error: `Test suite execution failed (cargo test):\n${output}`
+      };
+    }
+  }
+
+  // Python
+  if (fs.existsSync(path.join(cwd, "pytest.ini")) || fs.existsSync(path.join(cwd, "conftest.py")) || fs.existsSync(path.join(cwd, "tests"))) {
+    let pytestAvailable = false;
+    try {
+      execSync("pytest --version", { stdio: "ignore" });
+      pytestAvailable = true;
+    } catch (e) {}
+
+    if (pytestAvailable) {
+      try {
+        execSync("pytest", { stdio: "pipe", cwd });
+        return { success: true, message: "All verification checks and tests passed." };
+      } catch (err) {
+        const output = (err.stdout ? err.stdout.toString() : "") + "\n" + (err.stderr ? err.stderr.toString() : "");
+        return {
+          success: false,
+          error: `Test suite execution failed (pytest):\n${output}`
+        };
+      }
+    } else {
+      try {
+        execSync("python3 -m unittest discover", { stdio: "pipe", cwd });
+        return { success: true, message: "All verification checks and tests passed." };
+      } catch (err) {
+        const output = (err.stdout ? err.stdout.toString() : "") + "\n" + (err.stderr ? err.stderr.toString() : "");
+        return {
+          success: false,
+          error: `Test suite execution failed (unittest):\n${output}`
+        };
+      }
+    }
+  }
+
+  return { success: true, message: "All verification checks passed." };
+}
+
 function isBusy() {
   return busy;
 }
@@ -190,6 +486,7 @@ async function ask(prompt) {
   tui.setAutoScroll(true);
   const brain = brainRegistry.getActiveBrain();
   
+  const modifiedFiles = new Set();
   let hasEditedFiles = false;
   let hasVerified = false;
 
@@ -325,15 +622,28 @@ async function ask(prompt) {
       // FINAL ANSWER
       if (!parsed || parsed.response !== undefined) {
         if (hasEditedFiles && !hasVerified) {
-          const interceptMsg = `[SYSTEM INTERCEPT] You modified code but attempted to complete the task without verifying your work. You MUST use 'execute_shell_command' to run tests, linters, or a build step to prove the code works before returning a final response.`;
-          
-          currentPrompt = interceptMsg;
-          isInitial = false;
-          
-          dsItem = { type: "deepseek", text: "", spinning: true };
-          logItems.push(dsItem);
-          tui.renderLog();
-          continue;
+          const verificationResult = await runAutomaticVerification(modifiedFiles);
+          if (!verificationResult.success) {
+            const interceptMsg = `[SYSTEM INTERCEPT - VERIFICATION FAILED]\n${verificationResult.error}\n\nYou modified code but verification failed. You MUST fix these errors before returning a final response.`;
+            currentPrompt = interceptMsg;
+            isInitial = false;
+            dsItem = { type: "deepseek", text: "", spinning: true };
+            logItems.push(dsItem);
+            tui.renderLog();
+            continue;
+          } else {
+            hasVerified = true;
+            if (verificationResult.message) {
+              const statusItem = { type: "status", text: verificationResult.message };
+              logItems.push(statusItem);
+              tui.renderLog();
+              setTimeout(() => {
+                const idx = logItems.indexOf(statusItem);
+                if (idx !== -1) logItems.splice(idx, 1);
+                tui.renderLog();
+              }, 3000);
+            }
+          }
         }
 
         let finalText;
@@ -403,9 +713,18 @@ async function ask(prompt) {
         for (const t of toolItems) logItems.push(t);
         for (const c of batch) {
           saveMessage(sid, "tool_call", c.tool, { params: c });
-          if (["write_file", "multi_patch_file", "patch_file"].includes(c.tool)) {
+          if (["write_file", "patch_multiple_files", "patch_file"].includes(c.tool)) {
             hasEditedFiles = true;
             hasVerified = false;
+            if (c.tool === "write_file" || c.tool === "patch_file") {
+              if (c.path) modifiedFiles.add(path.resolve(c.path));
+            } else if (c.tool === "patch_multiple_files") {
+              if (c.patches && Array.isArray(c.patches)) {
+                for (const p of c.patches) {
+                  if (p && p.path) modifiedFiles.add(path.resolve(p.path));
+                }
+              }
+            }
           } else if (c.tool === "execute_shell_command") {
             hasVerified = true;
           }
@@ -473,6 +792,7 @@ async function ask(prompt) {
         const FORMAT_REMINDER = `\n\n[Reminder: You MUST respond in English only. You can either invoke another tool using JSON, or output plain text to respond to the user if you are done.\n` +
           `JSON Format (Single):\n{"tool": "tool_name", "param1": "val"}\n` +
           `JSON Format (Parallel):\n{"tools": [{"name": "t1", "p1": "v1"}, {"name": "t2"}]}\n` +
+          `CRITICAL: (1) NEVER use placeholder comments (e.g. "// ... rest of code"). Complete code only. (2) Review unified line diffs returned in tool outputs. (3) Verification checks (syntax/imports/tests) run automatically before completion. Ensure no errors are introduced.\n` +
           `LANGUAGE: English only. Never respond in Chinese or any other non-English language.]`;
         currentPrompt = `${combined}${overflow}${FORMAT_REMINDER}`;
         isInitial = false;
@@ -493,9 +813,22 @@ async function ask(prompt) {
         logItems.push(toolItem);
         saveMessage(sid, "tool_call", toolName, { params: toolParams });
         
-        if (["write_file", "multi_patch_file", "patch_file"].includes(toolName)) {
+        if (["write_file", "patch_multiple_files", "patch_file"].includes(toolName)) {
           hasEditedFiles = true;
           hasVerified = false;
+          if (toolName === "write_file" || toolName === "patch_file") {
+            if (toolParams && toolParams.path) {
+              modifiedFiles.add(path.resolve(toolParams.path));
+            }
+          } else if (toolName === "patch_multiple_files") {
+            if (toolParams && toolParams.patches && Array.isArray(toolParams.patches)) {
+              for (const p of toolParams.patches) {
+                if (p && p.path) {
+                  modifiedFiles.add(path.resolve(p.path));
+                }
+              }
+            }
+          }
         } else if (toolName === "execute_shell_command") {
           hasVerified = true;
         }
@@ -536,6 +869,7 @@ async function ask(prompt) {
         const FORMAT_REMINDER = `\n\n[Reminder: You MUST respond in English only. You can either invoke another tool using JSON, or output plain text to respond to the user if you are done.\n` +
           `JSON Format (Single):\n{"tool": "tool_name", "param1": "val"}\n` +
           `JSON Format (Parallel):\n{"tools": [{"name": "t1", "p1": "v1"}, {"name": "t2"}]}\n` +
+          `CRITICAL: (1) NEVER use placeholder comments (e.g. "// ... rest of code"). Complete code only. (2) Review unified line diffs returned in tool outputs. (3) Verification checks (syntax/imports/tests) run automatically before completion. Ensure no errors are introduced.\n` +
           `LANGUAGE: English only. Never respond in Chinese or any other non-English language.]`;
         currentPrompt = `[Tool Output for ${toolName}]\n${toolResult}${FORMAT_REMINDER}`;
         isInitial = false;
@@ -585,4 +919,5 @@ module.exports = {
   ask,
   isBusy,
   setBusy,
+  runAutomaticVerification,
 };

@@ -230,11 +230,13 @@ Answer immediately in plain text.
 5. NEVER USE find_string unless the block is guaranteed unique AND you just read the file.
 6. CREATING NEW FILES: Use write_file or execute_shell_command with heredoc (<<'EOF') for configs/scripts.
 7. IF A PATCH FAILS: Do NOT retry with modified find_string. Re-read the file, get fresh line numbers, and retry with line-range.
+8. NO PLACEHOLDERS: Never use placeholder comments (e.g., "// ... rest of code", "// ... existing code", "# ... remains same"). The file tools have a Lazy Deletion Guard and will immediately reject edits containing placeholders. You must write complete files or full patch blocks.
+9. INSPECT DIFFS: All file tools return a unified diff. Review the diff in the tool output to verify that no code was unintentionally deleted.
 
 # STRICT EXECUTION PRINCIPLES
 
 1. **READ BEFORE EDIT**: You MUST use read_file to read any file before modifying it. Blind editing is forbidden.
-2. **MANDATORY FINAL VERIFICATION**: Before concluding any task, you MUST use execute_shell_command to run the project's linter, build tool, or tests. If it fails, fix the errors before replying. Never assume code works.
+2. **MANDATORY FINAL VERIFICATION**: Before concluding any task, a programmatic verification pipeline will execute syntax checks, full TypeScript project compilation (if tsconfig.json is present), and the project test suite. You cannot submit your final answer if verification fails. Fix all syntax, linker (imports/exports), compiler, and test errors.
 3. **NO ASSUMPTIONS**: Do not guess file paths, variable names, or project structure. Use list_directory or glob_search to confirm before acting.
 4. **INCREMENTAL STEPS**: For large tasks, split into tiny self-contained phases. Do not write entire codebases at once.
 5. **DEPENDENT STEPS**: Sequential tool calls. Inspect output before the next call.
