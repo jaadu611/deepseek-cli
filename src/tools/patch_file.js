@@ -19,7 +19,9 @@ module.exports = {
     required: ["path"]
   },
   async execute(params) {
-    const { path: filePath, start_line, end_line, new_content, find_string, replace_string } = params;
+    let { path: filePath, start_line, end_line, new_content, find_string, replace_string } = params;
+    const { resolveSubAgentPath } = require('../utils/config');
+    filePath = resolveSubAgentPath(filePath);
     // Lazy Deletion Guard
     const LAZY_REGEX = /(\/\/|\/\*|\#|\-\-)\s*(\.\.\.|existing|rest|todo\s*:?\s*rest|placeholder|same|remains)/i;
     if ((new_content !== undefined && LAZY_REGEX.test(new_content)) || (replace_string !== undefined && LAZY_REGEX.test(replace_string))) {

@@ -11,15 +11,7 @@ class DeepSeekWebBrain extends BaseBrain {
     this.exposedPages = new WeakSet();
     this.initPromise = null;
 
-    // Stream state
-    this._streamDone = false;
-    this._thinkingChunks = [];
-    this._responseChunks = [];
-    this._isThinking = false;
-    this._streamBuffer = "";
-    this._thinkingStartTime = null;
-    this._thinkingEndTime = null;
-    this._lastStatusCheck = null;
+    this.pageStates = new WeakMap();
   }
 
   static get id() {
@@ -28,6 +20,31 @@ class DeepSeekWebBrain extends BaseBrain {
 
   static get name() {
     return "DeepSeek Web Automator (Playwright)";
+  }
+
+  getOrCreatePageState(page) {
+    if (!this.pageStates.has(page)) {
+      this.pageStates.set(page, {
+        streamDone: false,
+        thinkingChunks: [],
+        responseChunks: [],
+        isThinking: false,
+        streamBuffer: "",
+        thinkingStartTime: null,
+        thinkingEndTime: null,
+      });
+    }
+    return this.pageStates.get(page);
+  }
+
+  async createNewPage() {
+    await this.waitForCDP();
+    const browser = await chromium.connectOverCDP("http://127.0.0.1:9222");
+    const ctx = browser.contexts()[0];
+    const page = await ctx.newPage();
+    await this.setupInterceptors(page);
+    await page.goto("https://chat.deepseek.com/").catch(() => {});
+    return page;
   }
 
   init() {
@@ -174,7 +191,7 @@ class DeepSeekWebBrain extends BaseBrain {
       const child = spawn(
         "chromium",
         [
-          "--headless=new",
+          // "--headless=new",
           "--remote-debugging-port=9222",
           "--user-data-dir=" + path.join(os.homedir(), "scraper-profile"),
           `--user-agent=${userAgent}`,
@@ -247,9 +264,10 @@ class DeepSeekWebBrain extends BaseBrain {
   async setupInterceptors(page) {
     if (!this.exposedPages.has(page)) {
       this.exposedPages.add(page);
-      await page.exposeFunction("_onNetworkChunk", (text) => this.processNetworkChunk(text));
+      await page.exposeFunction("_onNetworkChunk", (text) => this.processNetworkChunk(page, text));
       await page.exposeFunction("_onStreamEnd", () => {
-        this._streamDone = true;
+        const state = this.getOrCreatePageState(page);
+        state.streamDone = true;
       });
 
       const installFn = () => {
@@ -304,17 +322,18 @@ class DeepSeekWebBrain extends BaseBrain {
     }
   }
 
-  processNetworkChunk(text) {
-    this._streamBuffer += text;
-    const lines = this._streamBuffer.split("\n");
-    this._streamBuffer = lines.pop();
+  processNetworkChunk(page, text) {
+    const state = this.getOrCreatePageState(page);
+    state.streamBuffer += text;
+    const lines = state.streamBuffer.split("\n");
+    state.streamBuffer = lines.pop();
 
     for (let line of lines) {
       line = line.trim();
       if (!line.startsWith("data:")) continue;
       const jsonStr = line.slice(5).trim();
       if (jsonStr === "[DONE]") {
-        this._streamDone = true;
+        state.streamDone = true;
         continue;
       }
       let json;
@@ -329,26 +348,26 @@ class DeepSeekWebBrain extends BaseBrain {
         (json.p === "response" && json.v?.quasi_status === "FINISHED") ||
         json.p === "stream_end"
       ) {
-        this._streamDone = true;
+        state.streamDone = true;
         continue;
       }
 
       const fragments = json.v?.response?.fragments || (Array.isArray(json.v) ? json.v : []);
       for (const frag of fragments) {
-        if (frag.type === "THINK") this._isThinking = true;
-        if (frag.type === "RESPONSE") this._isThinking = false;
+        if (frag.type === "THINK") state.isThinking = true;
+        if (frag.type === "RESPONSE") state.isThinking = false;
         if (typeof frag.content === "string" && frag.content) {
-          (this._isThinking ? this._thinkingChunks : this._responseChunks).push(frag.content);
+          (state.isThinking ? state.thinkingChunks : state.responseChunks).push(frag.content);
         }
       }
 
       if (typeof json.v === "string" && json.p !== "response/status") {
-        (this._isThinking ? this._thinkingChunks : this._responseChunks).push(json.v);
+        (state.isThinking ? state.thinkingChunks : state.responseChunks).push(json.v);
       }
     }
   }
 
-  async submitPrompt(page, prompt) {
+  async submitPrompt(page, prompt, options = {}) {
     const textarea = page.locator("textarea").first();
     await textarea.waitFor({ state: "visible", timeout: 10000 });
     await page.waitForFunction(
@@ -359,9 +378,10 @@ class DeepSeekWebBrain extends BaseBrain {
     await textarea.fill(prompt);
     await textarea.focus();
 
-    // Toggle search on before submitting!
+    // Toggle search based on options (default to true)
+    const enableSearch = options.webSearch !== false;
     try {
-      await page.evaluate(() => {
+      await page.evaluate((enable) => {
         const selectors = [
           'button[aria-label*="Search"i]',
           'button[title*="Search"i]',
@@ -377,7 +397,7 @@ class DeepSeekWebBrain extends BaseBrain {
                              el.classList.contains('active') ||
                              el.className.includes('primary') ||
                              (el.querySelector('.checked') !== null);
-            if (!isActive) {
+            if (isActive !== enable) {
               el.click();
             }
             return;
@@ -396,14 +416,14 @@ class DeepSeekWebBrain extends BaseBrain {
                                clickable.classList.contains('checked') ||
                                clickable.classList.contains('active') ||
                                clickable.className.includes('primary');
-              if (!isActive) {
+              if (isActive !== enable) {
                 clickable.click();
               }
               return;
             }
           }
         }
-      });
+      }, enableSearch);
     } catch (e) {}
 
     const sendSelectors = [
@@ -445,25 +465,26 @@ class DeepSeekWebBrain extends BaseBrain {
     }
   }
 
-  async getCompletionStream(prompt, { onStartCalled, onProgress }) {
-    const page = await this.getPage();
+  async getCompletionStream(prompt, options = {}) {
+    const activePage = options.page || await this.getPage();
+    const { onStartCalled, onProgress } = options;
     let attempt = 0;
     const maxAttempts = 5;
 
     while (attempt < maxAttempts) {
       attempt++;
       // Reset state
-      this._streamDone = false;
-      this._thinkingChunks = [];
-      this._responseChunks = [];
-      this._isThinking = false;
-      this._streamBuffer = "";
-      this._thinkingStartTime = null;
-      this._thinkingEndTime = null;
-      this._lastStatusCheck = null;
+      const state = this.getOrCreatePageState(activePage);
+      state.streamDone = false;
+      state.thinkingChunks = [];
+      state.responseChunks = [];
+      state.isThinking = false;
+      state.streamBuffer = "";
+      state.thinkingStartTime = null;
+      state.thinkingEndTime = null;
 
-      await this.setupInterceptors(page);
-      await this.submitPrompt(page, prompt);
+      await this.setupInterceptors(activePage);
+      await this.submitPrompt(activePage, prompt, options);
 
       // Wait for first chunk
       const CHUNK_TIMEOUT = 15000;
@@ -471,7 +492,7 @@ class DeepSeekWebBrain extends BaseBrain {
       let firstChunkSeen = false;
       let failedToStart = false;
 
-      while (!this._thinkingChunks.length && !this._responseChunks.length && !this._streamDone) {
+      while (!state.thinkingChunks.length && !state.responseChunks.length && !state.streamDone) {
         if (Date.now() - chunkStart > CHUNK_TIMEOUT) {
           failedToStart = true;
           break;
@@ -484,7 +505,7 @@ class DeepSeekWebBrain extends BaseBrain {
           "/tmp/deepseek-cli-debug.log",
           `[Brain] Attempt ${attempt} failed to start streaming within ${CHUNK_TIMEOUT}ms. Reloading and retrying...\n`
         );
-        await page.reload().catch(() => {});
+        await activePage.reload().catch(() => {});
         await new Promise((r) => setTimeout(r, 2000));
         continue;
       }
@@ -495,16 +516,16 @@ class DeepSeekWebBrain extends BaseBrain {
       let stoppedPrematurely = false;
 
       const checkDone = () => {
-        if (this._streamDone) return true;
+        if (state.streamDone) return true;
 
         if (firstChunkSeen && Date.now() - lastDataTime > 3000) {
-          const thinkSoFar = this._thinkingChunks.join("");
-          const respSoFar = this._responseChunks.join("");
+          const thinkSoFar = state.thinkingChunks.join("");
+          const respSoFar = state.responseChunks.join("");
 
           const hasJson = respSoFar.includes("{") || thinkSoFar.includes("{");
           if (hasJson) {
             if (hasCompleteJSON(respSoFar) || hasCompleteJSON(thinkSoFar)) {
-              this._streamDone = true;
+              state.streamDone = true;
               return true;
             }
           }
@@ -514,19 +535,19 @@ class DeepSeekWebBrain extends BaseBrain {
         }
 
         if (
-          (this._thinkingChunks.length || this._responseChunks.length) &&
+          (state.thinkingChunks.length || state.responseChunks.length) &&
           Date.now() - lastDataTime > IDLE_TIMEOUT_MS
         ) {
-          this._streamDone = true;
+          state.streamDone = true;
           return true;
         }
         return false;
       };
 
-      while (!this._streamDone && !checkDone()) {
+      while (!state.streamDone && !checkDone()) {
         await new Promise((r) => setTimeout(r, 100));
-        const thinkSoFar = this._thinkingChunks.join("");
-        const respSoFar = this._responseChunks.join("");
+        const thinkSoFar = state.thinkingChunks.join("");
+        const respSoFar = state.responseChunks.join("");
 
         if (!firstChunkSeen && (thinkSoFar || respSoFar)) {
           firstChunkSeen = true;
@@ -534,8 +555,8 @@ class DeepSeekWebBrain extends BaseBrain {
         }
 
         if (firstChunkSeen) {
-          if (!this._thinkingStartTime && thinkSoFar) {
-            this._thinkingStartTime = Date.now();
+          if (!state.thinkingStartTime && thinkSoFar) {
+            state.thinkingStartTime = Date.now();
           }
 
           const currentLen = thinkSoFar.length + respSoFar.length;
@@ -548,17 +569,15 @@ class DeepSeekWebBrain extends BaseBrain {
             onProgress({
               thinking: thinkSoFar,
               text: respSoFar,
-              thinkingStartTime: this._thinkingStartTime,
-              thinkingEndTime: this._thinkingEndTime,
+              thinkingStartTime: state.thinkingStartTime,
+              thinkingEndTime: state.thinkingEndTime,
             });
           }
         }
-
-
       }
 
       // Check DOM for explicit "Stopped" status
-      const explicitlyStopped = await this.isGenerationStopped(page);
+      const explicitlyStopped = await this.isGenerationStopped(activePage);
       if (explicitlyStopped) {
         stoppedPrematurely = true;
       }
@@ -568,22 +587,22 @@ class DeepSeekWebBrain extends BaseBrain {
           "/tmp/deepseek-cli-debug.log",
           `[Brain] Attempt ${attempt} stopped prematurely (no data for 3s and incomplete final blocks). Reloading and retrying same prompt...\n`
         );
-        await page.reload().catch(() => {});
+        await activePage.reload().catch(() => {});
         await new Promise((r) => setTimeout(r, 3000));
         continue;
       }
 
-      if (this._streamBuffer.trim()) this.processNetworkChunk("\n");
-      const thinkSoFar = this._thinkingChunks.join("");
-      const respSoFar = this._responseChunks.join("");
-      if (thinkSoFar && this._thinkingStartTime) this._thinkingEndTime = Date.now();
+      if (state.streamBuffer.trim()) this.processNetworkChunk(activePage, "\n");
+      const thinkSoFar = state.thinkingChunks.join("");
+      const respSoFar = state.responseChunks.join("");
+      if (thinkSoFar && state.thinkingStartTime) state.thinkingEndTime = Date.now();
 
       if (!thinkSoFar.trim() && !respSoFar.trim()) {
         require("fs").appendFileSync(
           "/tmp/deepseek-cli-debug.log",
           `[Brain] Attempt ${attempt} returned completely empty response. Reloading and retrying...\n`
         );
-        await page.reload().catch(() => {});
+        await activePage.reload().catch(() => {});
         await new Promise((r) => setTimeout(r, 3000));
         continue;
       }
@@ -592,8 +611,8 @@ class DeepSeekWebBrain extends BaseBrain {
         onProgress({
           thinking: thinkSoFar,
           text: respSoFar,
-          thinkingStartTime: this._thinkingStartTime,
-          thinkingEndTime: this._thinkingEndTime,
+          thinkingStartTime: state.thinkingStartTime,
+          thinkingEndTime: state.thinkingEndTime,
         });
       }
 

@@ -28,6 +28,12 @@ module.exports = {
     required: ["patches"]
   },
   async execute({ patches }) {
+    const { resolveSubAgentPath } = require('../utils/config');
+    for (const p of patches) {
+      if (p && p.path) {
+        p.path = resolveSubAgentPath(p.path);
+      }
+    }
     const backups = []; // each entry: { original, backupPath }
     // Lazy Deletion Guard
     const LAZY_REGEX = /(\/\/|\/\*|\#|\-\-)\s*(\.\.\.|existing|rest|todo\s*:?\s*rest|placeholder|same|remains)/i;

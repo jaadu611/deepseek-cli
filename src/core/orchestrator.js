@@ -752,22 +752,25 @@ async function ask(prompt) {
               if (t) {
                 try {
                   const res = await t.execute(c);
-                  return safeTruncate(String(res ?? ""));
+                  return c.tool === "run_sub_agent" ? String(res ?? "") : safeTruncate(String(res ?? ""));
                 } catch (e) {
-                  return safeTruncate(`Error: ${e.message}`);
+                  return c.tool === "run_sub_agent" ? `Error: ${e.message}` : safeTruncate(`Error: ${e.message}`);
                 }
               }
               const isMcp = mcpLoader.getRegistry().some((x) => x.name === c.tool);
               if (isMcp) {
                 try {
                   const res = await mcpLoader.callTool(c.tool, c);
-                  return safeTruncate(String(res ?? ""));
+                  return c.tool === "run_sub_agent" ? String(res ?? "") : safeTruncate(String(res ?? ""));
                 } catch (e) {
-                  return safeTruncate(`MCP error: ${e.message}`);
+                  return c.tool === "run_sub_agent" ? `MCP error: ${e.message}` : safeTruncate(`MCP error: ${e.message}`);
                 }
               }
               return `Error: tool '${c.tool}' not found.`;
             })();
+            if (c.tool === "run_sub_agent") {
+              return executePromise;
+            }
             return Promise.race([executePromise, timeoutPromise]);
           })
         );
@@ -857,7 +860,7 @@ async function ask(prompt) {
           }
         }
 
-        toolResult = safeTruncate(String(toolResult));
+        toolResult = toolName === "run_sub_agent" ? String(toolResult) : safeTruncate(String(toolResult));
         toolItem.status = "completed";
         toolItem.result = toolResult;
         saveMessage(sid, "tool_result", toolResult, { tool: toolName });

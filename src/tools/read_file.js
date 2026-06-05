@@ -14,6 +14,8 @@ module.exports = {
     required: ["path"]
   },
   async execute({ path: filePath, start_line, end_line }) {
+    const { resolveSubAgentPath } = require('../utils/config');
+    filePath = resolveSubAgentPath(filePath);
     try {
       const resolved = path.resolve(filePath);
       if (!fs.existsSync(resolved)) return `Error: File not found: ${resolved}`;

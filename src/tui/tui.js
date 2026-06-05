@@ -206,65 +206,151 @@ function renderMd(raw) {
   return lines;
 }
 
-const scr = blessed.screen({
-  smartCSR: true,
-  fullUnicode: true,
-  title: "deepseek",
-  ignoreLocked: ["C-c"],
-});
-
-const topBar = blessed.box({
-  top: 0,
-  left: 0,
-  right: 0,
-  height: 1,
-  tags: false,
-  style: { bg: "default", fg: "#5a5a5a" },
-  padding: { left: 2 },
-  content: " deepseek ",
-});
-
-const chat = blessed.box({
-  top: 1,
-  left: 0,
-  right: 0,
-  bottom: 3,
-  scrollable: true,
-  alwaysScroll: true,
-  mouse: true,
-  keys: false,
-  tags: false,
-  wrap: false,
-  scrollbar: {
-    ch: "│",
-    style: { fg: "#2a2a2a" },
-    track: { bg: "default" },
-  },
-  padding: { left: 3, right: 3, top: 1 },
-  style: { bg: "default", fg: "#d2d2d2" },
-});
-
+let scr, topBar, chat, input, inputSep;
 let autoScrollEnabled = true;
 
-chat.on("scroll", () => {
-  const scrollHeight = chat.getScrollHeight();
-  const height = chat.height - chat.itop - chat.ibot;
-  const currentScroll = chat.getScroll();
+if (process.env.TESTING) {
+  scr = {
+    render: () => {},
+    append: () => {},
+    key: () => {},
+    on: () => {},
+  };
+  topBar = {
+    setContent: () => {},
+  };
+  chat = {
+    on: () => {},
+    setContent: () => {},
+    setScrollPerc: () => {},
+    getScrollHeight: () => 0,
+    height: 0,
+    itop: 0,
+    ibot: 0,
+    getScroll: () => 0,
+  };
+  input = {
+    key: () => {},
+    on: () => {},
+    focus: () => {},
+    clearValue: () => {},
+    screen: null,
+    _reading: false,
+    readInput: () => {},
+  };
+  inputSep = {};
+} else {
+  scr = blessed.screen({
+    smartCSR: true,
+    fullUnicode: true,
+    title: "deepseek",
+    ignoreLocked: ["C-c"],
+  });
 
-  if (scrollHeight > height) {
-    if (currentScroll < scrollHeight - height - 2) {
-      autoScrollEnabled = false;
+  topBar = blessed.box({
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 1,
+    tags: false,
+    style: { bg: "default", fg: "#5a5a5a" },
+    padding: { left: 2 },
+    content: " deepseek ",
+  });
+
+  chat = blessed.box({
+    top: 1,
+    left: 0,
+    right: 0,
+    bottom: 3,
+    scrollable: true,
+    alwaysScroll: true,
+    mouse: true,
+    keys: false,
+    tags: false,
+    wrap: false,
+    scrollbar: {
+      ch: "│",
+      style: { fg: "#2a2a2a" },
+      track: { bg: "default" },
+    },
+    padding: { left: 3, right: 3, top: 1 },
+    style: { bg: "default", fg: "#d2d2d2" },
+  });
+
+  chat.on("scroll", () => {
+    const scrollHeight = chat.getScrollHeight();
+    const height = chat.height - chat.itop - chat.ibot;
+    const currentScroll = chat.getScroll();
+
+    if (scrollHeight > height) {
+      if (currentScroll < scrollHeight - height - 2) {
+        autoScrollEnabled = false;
+      } else {
+        autoScrollEnabled = true;
+      }
     } else {
       autoScrollEnabled = true;
     }
-  } else {
-    autoScrollEnabled = true;
-  }
-});
+  });
+
+  inputSep = blessed.line({
+    bottom: 3,
+    left: 0,
+    right: 0,
+    orientation: "horizontal",
+    style: { fg: "#2a2a2a" },
+  });
+
+  input = blessed.textbox({
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: 3,
+    inputOnFocus: true,
+    padding: { left: 2, right: 3 },
+    placeholder: " Type a message or command... ",
+    style: {
+      bg: "default",
+      fg: "#e4e4e7",
+      border: { fg: "#27272a" },
+      focus: { border: { fg: "#06b6d4" } },
+    },
+    border: { type: "line" },
+  });
+
+  input.key(["escape"], () => {
+    // Ignore escape to prevent default blessed cancellation/lockup behavior
+  });
+
+  // Safe left/right arrow movement within input field
+  input.key(["left"], () => {
+    if (input.focused && input._.cursorX > 0) {
+      input._.cursorX--;
+      scr.render();
+    }
+  });
+
+  input.key(["right"], () => {
+    if (input.focused && input._.cursorX < input._.value.length) {
+      input._.cursorX++;
+      scr.render();
+    }
+  });
+
+  input.on("cancel", () => {
+    refocusInput();
+  });
+
+  scr.append(topBar);
+  scr.append(chat);
+  scr.append(inputSep);
+  scr.append(input);
+}
 
 function scrollChatToBottom() {
-  chat.setScrollPerc(100);
-  scr.render();
+  if (chat && chat.setScrollPerc) chat.setScrollPerc(100);
+  if (scr && scr.render) scr.render();
 }
 
 function setAutoScroll(enabled) {
@@ -273,59 +359,6 @@ function setAutoScroll(enabled) {
     scrollChatToBottom();
   }
 }
-
-const inputSep = blessed.line({
-  bottom: 3,
-  left: 0,
-  right: 0,
-  orientation: "horizontal",
-  style: { fg: "#2a2a2a" },
-});
-
-const input = blessed.textbox({
-  bottom: 0,
-  left: 0,
-  right: 0,
-  height: 3,
-  inputOnFocus: true,
-  padding: { left: 2, right: 3 },
-  placeholder: " Type a message or command... ",
-  style: {
-    bg: "default",
-    fg: "#e4e4e7",
-    border: { fg: "#27272a" },
-    focus: { border: { fg: "#06b6d4" } },
-  },
-  border: { type: "line" },
-});
-
-input.key(["escape"], () => {
-  // Ignore escape to prevent default blessed cancellation/lockup behavior
-});
-
-// Safe left/right arrow movement within input field
-input.key(["left"], () => {
-  if (input.focused && input._.cursorX > 0) {
-    input._.cursorX--;
-    scr.render();
-  }
-});
-
-input.key(["right"], () => {
-  if (input.focused && input._.cursorX < input._.value.length) {
-    input._.cursorX++;
-    scr.render();
-  }
-});
-
-input.on("cancel", () => {
-  refocusInput();
-});
-
-scr.append(topBar);
-scr.append(chat);
-scr.append(inputSep);
-scr.append(input);
 
 function setTopBarTitle(title) {
   const cwd = process.cwd();
@@ -496,10 +529,16 @@ chat.on("click", (data) => {
   const item = lineToItem[y];
   if (item?.type === "tool" && item.status === "completed") {
     item.expanded = !item.expanded;
+    const prevScroll = autoScrollEnabled;
+    autoScrollEnabled = false;
     renderLog();
+    autoScrollEnabled = prevScroll;
   } else if (item?.type === "deepseek" && item.thinking) {
     item.expanded = !item.expanded;
+    const prevScroll = autoScrollEnabled;
+    autoScrollEnabled = false;
     renderLog();
+    autoScrollEnabled = prevScroll;
   }
 });
 

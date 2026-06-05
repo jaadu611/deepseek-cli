@@ -1,6 +1,9 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const { AsyncLocalStorage } = require('async_hooks');
+
+const subAgentStorage = new AsyncLocalStorage();
 
 const DS_CONFIG_DIR = path.join(os.homedir(), '.deepseek_cli', 'ds_config');
 const CONFIG_PATH = path.join(DS_CONFIG_DIR, 'config.json');
@@ -46,10 +49,37 @@ function saveConfig(config) {
 }
 
 function getBackupsPath() {
+  const store = subAgentStorage.getStore();
+  if (store && store.subAgentDir) {
+    const subAgentBackups = path.join(store.subAgentDir, 'backups');
+    if (!fs.existsSync(subAgentBackups)) fs.mkdirSync(subAgentBackups, { recursive: true });
+    return subAgentBackups;
+  }
   ensureConfigDir();
   const backupsDir = path.join(DS_CONFIG_DIR, 'backups');
   if (!fs.existsSync(backupsDir)) fs.mkdirSync(backupsDir, { recursive: true });
   return backupsDir;
+}
+
+function resolveSubAgentPath(filePath) {
+  if (!filePath || typeof filePath !== 'string') return filePath;
+  const store = subAgentStorage.getStore();
+  if (store && store.subAgentDir) {
+    const filename = path.basename(filePath);
+    const resolved = path.resolve(filePath);
+    const relative = path.relative(process.cwd(), resolved);
+
+    // Redirect implementation plan and task lists
+    if (filename === 'implementation_plan.md' || filename === 'task.md') {
+      return path.join(store.subAgentDir, filename);
+    }
+    
+    // Redirect scratch files
+    if (relative.includes('scratch') || filePath.includes('scratch')) {
+      return path.join(store.subAgentDir, 'scratch', filename);
+    }
+  }
+  return filePath;
 }
 
 function getSessionsPath() {
@@ -66,5 +96,7 @@ module.exports = {
   getBackupsPath,
   getSessionsPath,
   DS_CONFIG_DIR,
-  CONFIG_PATH
+  CONFIG_PATH,
+  subAgentStorage,
+  resolveSubAgentPath
 };
