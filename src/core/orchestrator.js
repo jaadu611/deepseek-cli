@@ -1367,8 +1367,8 @@ async function compactCurrentSession() {
   }
 
   const logItems = tui.getLogItems();
-  const summaryItem = { type: "compact", message: "Requesting summary from AI..." };
-  logItems.push(summaryItem);
+  const compactItem = { type: "compact", message: "Requesting summary from AI..." };
+  logItems.push(compactItem);
   tui.renderLog();
 
   let summaryText = "";
@@ -1384,15 +1384,10 @@ async function compactCurrentSession() {
     summaryText = result.responseText || result.thinkingText || "";
     if (!summaryText.trim()) throw new Error("Generated summary is empty");
   } catch (err) {
-    const idx = logItems.indexOf(summaryItem);
-    if (idx !== -1) logItems.splice(idx, 1);
+    compactItem.message = `✗ Compression failed: ${err.message}`;
     tui.renderLog();
     throw new Error(`Failed to generate summary: ${err.message}`);
   }
-
-  const idx = logItems.indexOf(summaryItem);
-  if (idx !== -1) logItems.splice(idx, 1);
-  tui.renderLog();
 
   await brain.createNewChat();
   await brain.sendPromptInNewChat(summaryText);
@@ -1404,6 +1399,8 @@ async function compactCurrentSession() {
     await new Promise(r => setTimeout(r, 500));
   }
   if (!newDeepseekId) {
+    compactItem.message = "✗ Compression failed: Could not obtain deepseek_id after sending summary";
+    tui.renderLog();
     throw new Error("Could not obtain deepseek_id after sending summary");
   }
 
@@ -1414,6 +1411,9 @@ async function compactCurrentSession() {
   if (session && session.title && !session.title.startsWith("Compacted:")) {
     updateSessionTitle(sid, `Compacted: ${session.title}`);
   }
+
+  compactItem.message = `✓ Compression complete. New chat created with ID: ${newDeepseekId}`;
+  tui.renderLog();
 
   return { success: true, newDeepseekId };
 }

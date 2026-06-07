@@ -23,7 +23,7 @@ const C = {
   err: fg(248, 113, 113),
   sep: fg(48, 48, 48),
   codeBorder: fg(75, 75, 75),
-  compact: fg(255, 165, 0),
+  compact: fg(0, 191, 255),
 };
 
 const FRAMES = ["⠁", "⠂", "⠄", "⡀", "⢀", "⠠", "⠐", "⠈"];

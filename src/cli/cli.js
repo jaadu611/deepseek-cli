@@ -108,13 +108,11 @@ tui.input.on("submit", async (val) => {
       return;
     }
     orchestrator.setBusy(true);
-    const logItems = tui.getLogItems();
     tui.renderLog();
     try {
-      const result = await orchestrator.compactCurrentSession();
-      logItems.push({ type: "compact", message: `✓ Compression complete. New chat created with ID: ${result.newDeepseekId}` });
+      await orchestrator.compactCurrentSession();
     } catch (err) {
-      logItems.push({ type: "error", message: `Compression failed: ${err.message}` });
+      // Error already displayed inside compactCurrentSession via log item
     } finally {
       orchestrator.setBusy(false);
       tui.refocusInput();
