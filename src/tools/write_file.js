@@ -20,11 +20,11 @@ module.exports = {
     
     // CLI Sandbox Isolation Guard
     const config = loadConfig();
-    if (!config.allow_self_modification && process.env.ALLOW_CLI_EDIT !== '1') {
+    if (!config.allow_self_modification) {
       const cliDir = path.resolve(__dirname, '../../');
       const resolvedPath = path.resolve(filePath);
-      if (resolvedPath.startsWith(cliDir)) {
-        return `❌ Edit rejected: Modifying CLI installation files is forbidden. To allow this, run the CLI with the ALLOW_CLI_EDIT=1 environment variable.`;
+      if (resolvedPath.startsWith(cliDir + path.sep) || resolvedPath === cliDir) {
+        return `❌ Edit rejected: Modifying CLI installation files is forbidden when allow_self_modification is false in config.json. Set "allow_self_modification": true in your ds_config/config.json to allow this.`;
       }
     }
 
