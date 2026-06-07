@@ -5,6 +5,7 @@ const tui = require("../tui/tui");
 const orchestrator = require("../core/orchestrator");
 const brainRegistry = require("../core/brains/registry");
 const mcpLoader = require("../mcp/mcp_loader");
+const checkpoints = require("../utils/checkpoints");
 const {
   initHistory,
   getSessions,
@@ -101,6 +102,27 @@ tui.input.on("submit", async (val) => {
     tui.refocusInput();
     return;
   }
+  if (val === "/compact") {
+    if (orchestrator.isBusy()) {
+      tui.refocusInput();
+      return;
+    }
+    orchestrator.setBusy(true);
+    const logItems = tui.getLogItems();
+    tui.renderLog();
+    try {
+      const result = await orchestrator.compactCurrentSession();
+      logItems.push({ type: "compact", message: `✓ Compression complete. New chat created with ID: ${result.newDeepseekId}` });
+    } catch (err) {
+      logItems.push({ type: "error", message: `Compression failed: ${err.message}` });
+    } finally {
+      orchestrator.setBusy(false);
+      tui.refocusInput();
+      tui.renderLog();
+    }
+    return;
+  }
+
 
   // ── /install-workflow <url> ───────────────────────────────────────────────
   if (val.startsWith("/install-workflow ")) {
@@ -235,6 +257,44 @@ tui.input.on("submit", async (val) => {
     return;
   }
 
+  // ── /revert <checkpoint_id> ──────────────────────────────────────────────
+  if (val.startsWith("/revert ")) {
+    const cpId = val.replace("/revert ", "").trim();
+    const logItems = tui.getLogItems();
+    if (!cpId) {
+      logItems.push({ type: "error", message: "Usage: /revert <checkpoint_id>" });
+      tui.renderLog();
+      tui.refocusInput();
+      return;
+    }
+    try {
+      const meta = checkpoints.revertToCheckpoint(cpId);
+      logItems.push({ type: "status", text: `✓ Reverted workspace to Checkpoint ${meta.id} (created at ${new Date(meta.timestamp).toLocaleTimeString()})` });
+    } catch (err) {
+      logItems.push({ type: "error", message: err.message });
+    }
+    tui.renderLog();
+    tui.refocusInput();
+    return;
+  }
+
+  // ── /checkpoints ──────────────────────────────────────────────────────────
+  if (val === "/checkpoints") {
+    const logItems = tui.getLogItems();
+    const list = checkpoints.listCheckpoints();
+    if (list.length === 0) {
+      logItems.push({ type: "status", text: "No checkpoints found." });
+    } else {
+      logItems.push({ type: "status", text: "--- Checkpoints ---" });
+      for (const cp of list) {
+        logItems.push({ type: "status", text: `- ${cp.id} (${new Date(cp.timestamp).toLocaleTimeString()}): "${cp.userPrompt}" [${cp.files.length} files]` });
+      }
+    }
+    tui.renderLog();
+    tui.refocusInput();
+    return;
+  }
+
   // ── /help ─────────────────────────────────────────────────────────────────
   if (val === "/help") {
     const logItems = tui.getLogItems();
@@ -248,12 +308,22 @@ tui.input.on("submit", async (val) => {
 - **/install-mcp <name> <package>** — Add an MCP server to mcp.json
 - **/list-workflows** — List all installed workflows and their triggers
 - **/list-mcp** — List all configured MCP servers
+- **/checkpoints** — List all local checkpoints
+- **/revert <checkpoint_id>** — Revert codebase to a previous checkpoint
 - **/help** — Show this help message`,
       spinning: false,
     });
     tui.renderLog();
     tui.refocusInput();
     return;
+  }
+
+  // Auto-checkpoint before prompt execution
+  const cp = checkpoints.createCheckpoint(val);
+  if (cp) {
+    const logItems = tui.getLogItems();
+    logItems.push({ type: "status", text: `[Checkpoint ${cp.id} created]` });
+    tui.renderLog();
   }
 
   orchestrator.ask(val).catch(() => {});

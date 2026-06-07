@@ -23,6 +23,7 @@ const C = {
   err: fg(248, 113, 113),
   sep: fg(48, 48, 48),
   codeBorder: fg(75, 75, 75),
+  compact: fg(255, 165, 0),
 };
 
 const FRAMES = ["⠁", "⠂", "⠄", "⡀", "⢀", "⠠", "⠐", "⠈"];
@@ -493,6 +494,8 @@ function renderLog() {
           itemLines.push(C.err + "  ✕ " + R + C.muted + item.message + R);
         } else if (item.type === "status") {
           itemLines.push(C.dimmer + "  " + FRAMES[spinFrame % FRAMES.length] + " " + C.muted + item.text + R);
+        } else if (item.type === "compact") {
+          itemLines.push(C.compact + "  ⚙ " + R + C.muted + item.message + R);
         }
 
         for (const l of itemLines) {

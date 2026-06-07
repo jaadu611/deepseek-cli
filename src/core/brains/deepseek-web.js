@@ -209,6 +209,7 @@ class DeepSeekWebBrain extends BaseBrain {
   }
 
   async waitForCDP(port = 9222, timeout = 10000) {
+    const http = require("http");
     const start = Date.now();
     while (Date.now() - start < timeout) {
       try {
@@ -392,7 +393,7 @@ class DeepSeekWebBrain extends BaseBrain {
         for (const sel of selectors) {
           const el = document.querySelector(sel);
           if (el) {
-            const isActive = el.getAttribute('aria-checked') === 'true' || 
+            const isActive = el.getAttribute('aria-checked') === 'true' ||
                              el.classList.contains('checked') ||
                              el.classList.contains('active') ||
                              el.className.includes('primary') ||
@@ -412,7 +413,7 @@ class DeepSeekWebBrain extends BaseBrain {
               clickable = clickable.parentElement;
             }
             if (clickable) {
-              const isActive = clickable.getAttribute('aria-checked') === 'true' || 
+              const isActive = clickable.getAttribute('aria-checked') === 'true' ||
                                clickable.classList.contains('checked') ||
                                clickable.classList.contains('active') ||
                                clickable.className.includes('primary');
@@ -620,6 +621,142 @@ class DeepSeekWebBrain extends BaseBrain {
     }
 
     throw new Error("DeepSeek failed to complete generation after multiple attempts.");
+  }
+
+
+
+  async _clickNewChatButton() {
+    const page = await this.getPage();
+    const currentUrl = page.url();
+    require('fs').appendFileSync(
+      "/tmp/deepseek-cli-debug.log",
+      `[Brain] _clickNewChatButton called, current URL: ${currentUrl}\n`
+    );
+    
+    const clicked = await page.evaluate(() => {
+      const selectors = [
+        'button[aria-label*="New Chat"i]',
+        'button[title*="New Chat"i]',
+        'div[role="button"][aria-label*="New Chat"i]',
+        'a[aria-label*="New Chat"i]',
+        '.ds-sidebar button',
+      ];
+      for (const sel of selectors) {
+        const elements = document.querySelectorAll(sel);
+        for (const el of elements) {
+          const text = (el.textContent || '').trim().toLowerCase();
+          if (text.includes('new chat') || text === 'new' || text === '+ new chat') {
+            el.click();
+            return true;
+          }
+        }
+        const firstEl = document.querySelector(sel);
+        if (firstEl && (firstEl.getAttribute('aria-label') || '').toLowerCase().includes('new chat')) {
+          firstEl.click();
+          return true;
+        }
+      }
+      const allElements = Array.from(document.querySelectorAll('button, div[role="button"], a, span, p'));
+      for (const el of allElements) {
+        const text = (el.textContent || '').trim().toLowerCase();
+        if (text === 'new chat' || text === '+ new chat' || text === 'new') {
+          let clickable = el;
+          while (clickable && clickable.tagName !== 'BUTTON' && clickable.tagName !== 'A' && clickable.getAttribute('role') !== 'button') {
+            clickable = clickable.parentElement;
+          }
+          if (clickable) {
+            clickable.click();
+            return true;
+          }
+        }
+      }
+      return false;
+    }).catch(() => false);
+    
+    if (clicked) {
+      await page.waitForTimeout(400).catch(() => {});
+    }
+    return clicked;
+  }
+
+  async createNewChat() {
+    const page = await this.getPage();
+    require('fs').appendFileSync(
+      "/tmp/deepseek-cli-debug.log",
+      `[Brain] createNewChat called, current URL: ${page.url()}\n`
+    );
+    
+    // Click the New Chat button
+    const clicked = await this._clickNewChatButton();
+    if (!clicked) {
+      // Fallback: navigate directly to chat home
+      await page.goto("https://chat.deepseek.com/").catch(() => {});
+      await this.setupInterceptors(page);
+    }
+    
+    // Give the page a moment to settle
+    await new Promise(r => setTimeout(r, 500));
+    return true;
+  }
+
+  async getCurrentDeepseekId() {
+    const page = await this.getPage();
+    const url = page.url();
+    const match = url.match(/\/s\/([a-zA-Z0-9]+)/);
+    require('fs').appendFileSync(
+      "/tmp/deepseek-cli-debug.log",
+      `[Brain] getCurrentDeepseekId: URL=${url}, found=${match ? match[1] : 'null'}\n`
+    );
+    return match ? match[1] : null;
+  }
+
+  async sendPromptInNewChat(promptText) {
+    const page = await this.getPage();
+    require('fs').appendFileSync(
+      "/tmp/deepseek-cli-debug.log",
+      `[Brain] sendPromptInNewChat called with prompt length: ${promptText.length}\n`
+    );
+    
+    // Wait for textarea to be available
+    const textareaSelector = 'textarea.ds-input-textarea, textarea[placeholder*="Message"], textarea[placeholder*="Ask anything"]';
+    await page.waitForSelector(textareaSelector, { timeout: 10000 }).catch(() => {
+      throw new Error("Textarea not found for sending prompt");
+    });
+    
+    // Fill the textarea
+    await page.fill(textareaSelector, promptText);
+    
+    // Click send button
+    const sendButtonSelectors = [
+      'button[type="submit"]',
+      'button[aria-label="Send"]',
+      'button:has-text("Send")',
+      'svg[data-icon="paper-plane"]',
+    ];
+    let clicked = false;
+    for (const sel of sendButtonSelectors) {
+      try {
+        const button = await page.$(sel);
+        if (button) {
+          await button.click();
+          clicked = true;
+          break;
+        }
+      } catch (err) {}
+    }
+    if (!clicked) {
+      // Try pressing Enter as fallback
+      await page.keyboard.press('Enter');
+    }
+    
+    // Wait for AI response to appear
+    await page.waitForSelector('.ds-message.ai-message, .ds-message:has-text("I")', { timeout: 15000 }).catch(() => {});
+    
+    require('fs').appendFileSync(
+      "/tmp/deepseek-cli-debug.log",
+      `[Brain] sendPromptInNewChat completed\n`
+    );
+    return true;
   }
 }
 

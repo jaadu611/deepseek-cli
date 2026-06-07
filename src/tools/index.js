@@ -190,11 +190,12 @@ function getSystemPrompt(userPrompt) {
 # COORDINATION & DELEGATION RULE (CRITICAL)
 - You MUST NEVER write code features, implement functions/classes from scratch, or create logic yourself. This keeps your context clean and unburdened.
 - You MUST delegate all feature implementation, function writing, and unit-test creation to Sub-Agents using the "run_sub_agent" tool.
-- You CAN call file tools (like "write_file", "patch_file", etc.) ONLY to:
+- You CAN call file tools (like "patch_file", "patch_multiple_files", etc.) ONLY to:
   1. Review the output code produced by Sub-Agents.
   2. Stitch the code into target files.
   3. Wire up imports, exports, and routes.
   4. Patch small bugs, syntax fixes, or variable adjustments.
+  5. NEVER call write_file on existing files. write_file is strictly for new files.
 - Once a Sub-Agent finishes its micro-task, its tab is automatically destroyed. You review the changes, patch any integration issues, and then move to the next micro-task.
 
 # RESEARCH & CODEBASE UNDERSTANDING (MANDATORY FIRST STEP)
@@ -232,6 +233,7 @@ Parallel independent tool calls format:
 3. **MANDATORY FINAL VERIFICATION**: A programmatic verification pipeline will execute syntax checks, compilation checks, and tests before task completion. You must resolve all syntax, compiler, and test errors.
 4. **NO ASSUMPTIONS**: Do not guess file paths or structure. Verify using list_directory or glob_search first.
 5. **MCP PREFERENCE**: Eagerly check for MCP tools for external/web operations.
+6. **NEVER USE write_file ON EXISTING FILES**: write_file is strictly for creating brand-new files. It will fail with an error if called on any file that already exists. For all edits to existing files, you MUST use patch_file or patch_multiple_files.
 
 # SYSTEM ENVIRONMENT
 - OS: ${os.type()} ${os.release()} | Arch: ${os.arch()}
@@ -360,7 +362,6 @@ Parallel independent tool calls format:
 5. **MCP PREFERENCE**: Eagerly check for MCP tools for external/web operations.
 
 # WORKFLOW
-<<<<<<< HEAD
 
 ### Simple tasks (one-shot, no tools needed):
 Answer immediately in plain text.
@@ -374,14 +375,15 @@ Answer immediately in plain text.
 
 # FILE EDITING PROTOCOL (MANDATORY)
 1. BEFORE ANY EDIT: Always call read_file first. Never patch from memory.
-2. SMALL/MEDIUM EDITS (1-15 lines): Use patch_file with start_line + end_line + new_content.
-3. LARGE EDITS (>15 lines or complex refactors): Use write_file to rewrite the entire file.
-4. MULTI-FILE CHANGES: Use patch_multiple_files for atomic coordinated edits.
-5. NEVER USE find_string unless the block is guaranteed unique AND you just read the file.
-6. CREATING NEW FILES: Use write_file or execute_shell_command with heredoc (<<'EOF') for configs/scripts.
-7. IF A PATCH FAILS: Do NOT retry with modified find_string. Re-read the file, get fresh line numbers, and retry with line-range.
-8. NO PLACEHOLDERS: Never use placeholder comments (e.g., "// ... rest of code", "// ... existing code", "# ... remains same"). The file tools have a Lazy Deletion Guard and will immediately reject edits containing placeholders. You must write complete files or full patch blocks.
-9. INSPECT DIFFS: All file tools return a unified diff. Review the diff in the tool output to verify that no code was unintentionally deleted.
+2. SURGICAL EDITS ONLY: Use patch_file (start_line + end_line + new_content) for ALL edits to existing files, regardless of size. patch_multiple_files for atomic multi-file changes.
+3. NEVER USE write_file ON AN EXISTING FILE. write_file is only for creating brand-new files that do not yet exist. Using write_file on an existing file risks silently deleting methods, classes, or logic that were not part of your change.
+4. NEVER REMOVE EXISTING CODE: When adding a new method or feature, APPEND or PATCH only the targeted lines. Do not touch, reorder, or delete any code outside the scope of your change.
+5. AFTER EVERY PATCH: Review the unified diff returned by the tool. Verify that no lines were unintentionally deleted. If deletions appear outside your intended change, immediately revert using another patch.
+6. MULTI-FILE CHANGES: Use patch_multiple_files for atomic coordinated edits across files.
+7. NEVER USE find_string unless the block is guaranteed unique AND you just read the file.
+8. CREATING NEW FILES: Use write_file (new files only) or execute_shell_command with heredoc.
+9. IF A PATCH FAILS: Do NOT retry with modified find_string. Re-read the file, get fresh line numbers, and retry with line-range.
+10. NO PLACEHOLDERS: Never use placeholder comments (e.g., "// ... rest of code"). Write complete, real code in every patch block.
 
 # STRICT EXECUTION PRINCIPLES
 

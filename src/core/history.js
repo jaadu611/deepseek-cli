@@ -113,30 +113,50 @@ function saveMessage(sessionId, role, content, metadata = {}) {
   const entry = {
     timestamp: new Date().toISOString(),
     role,
-    content: typeof content === 'string' ? content : JSON.stringify(content),
-    ...metadata
+    content,
+    metadata
   };
   fs.appendFileSync(file, JSON.stringify(entry) + '\n', 'utf8');
-  
-  const sessions = getSessions();
-  const sess = sessions.find(s => s.id === sessionId);
-  if (sess) {
-    sess.updated_at = new Date().toISOString();
-    saveSessions(sessions);
-  }
 }
 
 function loadSessionMessages(sessionId) {
   const file = path.join(SESSIONS_DIR, `${sessionId}.jsonl`);
   if (!fs.existsSync(file)) return [];
   const content = fs.readFileSync(file, 'utf8');
-  return content.trim().split('\n').filter(Boolean).map(line => {
-    try { return JSON.parse(line); } catch { return null; }
-  }).filter(Boolean);
+  const lines = content.trim().split('\n').filter(l => l.trim());
+  return lines.map(line => JSON.parse(line));
+}
+
+function getFilteredChatHistory(sessionId) {
+  if (!sessionId) return '';
+  const file = path.join(SESSIONS_DIR, `${sessionId}.jsonl`);
+  if (!fs.existsSync(file)) return '';
+  
+  const content = fs.readFileSync(file, 'utf8');
+  const lines = content.trim().split('\n').filter(l => l.trim());
+  const messages = [];
+  
+  for (const line of lines) {
+    try {
+      const entry = JSON.parse(line);
+      // Filter out tool messages
+      if (entry.role === 'tool') continue;
+      if (entry.metadata && entry.metadata.type === 'tool') continue;
+      if (entry.content && (entry.content.includes('"tool":') || entry.content.startsWith('{"tool":'))) continue;
+      // Keep only user and assistant
+      if (entry.role !== 'user' && entry.role !== 'assistant') continue;
+      messages.push(`[${entry.role.toUpperCase()}] ${entry.content}`);
+    } catch (err) {
+      // skip malformed lines
+    }
+  }
+  
+  return messages.join('\n');
 }
 
 module.exports = {
   initHistory,
+  getSessions,
   createSession,
   getCurrentSessionId,
   setCurrentSessionId,
@@ -144,5 +164,5 @@ module.exports = {
   updateSessionTitle,
   saveMessage,
   loadSessionMessages,
-  getSessions
+  getFilteredChatHistory
 };

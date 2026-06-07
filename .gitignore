@@ -18,3 +18,6 @@ src/mcp/mcp.json
 # Backup and log files
 *.bak
 *.log
+
+# Dist folder
+dist/

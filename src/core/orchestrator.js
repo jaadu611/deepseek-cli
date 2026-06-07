@@ -12,6 +12,8 @@ const {
   saveMessage,
   getSessions,
   updateSessionTitle,
+  updateSessionDeepseekId,
+  getFilteredChatHistory,
 } = require("./history");
 
 let busy = false;
@@ -288,17 +290,274 @@ function verifyImportsAndExports(filePath) {
   return { success: true };
 }
 
+const COMMON_WORDS = new Set([
+  'close', 'init', 'start', 'stop', 'run', 'execute', 'status', 'config', 'name', 
+  'get', 'set', 'update', 'clear', 'create', 'delete', 'reset', 'load', 'save', 
+  'index', 'type', 'error', 'result', 'success', 'log', 'open', 'send', 'connect', 
+  'setup', 'process', 'handle', 'wait', 'show', 'hide', 'render', 'add', 'remove', 
+  'has', 'find', 'all', 'map', 'filter', 'reduce', 'keys', 'values', 'entries', 
+  'push', 'pop', 'shift', 'unshift', 'splice', 'slice', 'join', 'split', 'replace', 
+  'match', 'test', 'exec', 'toString', 'then', 'catch', 'finally'
+]);
+
+function verifyNoDeletedReferences(filePath) {
+  if (!fs.existsSync(filePath)) return null;
+  const ext = path.extname(filePath).toLowerCase();
+  if (![".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"].includes(ext)) return null;
+
+  const { execSync } = require('child_process');
+  const relativePath = path.relative(process.cwd(), filePath);
+  
+  let oldContent = "";
+  try {
+    oldContent = execSync(`git show "HEAD:${relativePath}"`, { stdio: 'pipe' }).toString();
+  } catch (err) {
+    // If the file is not tracked in git (e.g. new file), skip deleted methods check
+    return null;
+  }
+
+  const newContent = fs.readFileSync(filePath, "utf8");
+
+  function getDeclaredMethods(content) {
+    const methods = new Set();
+    // Class methods: async foo() { or foo() {
+    const classMethodRegex = /^\s*(?:async\s+)?([a-zA-Z0-9_]+)\s*\([^)]*\)\s*\{/gm;
+    let match;
+    while ((match = classMethodRegex.exec(content)) !== null) {
+      const name = match[1];
+      if (!['if', 'for', 'while', 'switch', 'catch', 'constructor'].includes(name)) {
+        methods.add(name);
+      }
+    }
+    // Function assignments: const foo = () => or let foo = async () =>
+    const funcRegex = /(?:function\s+|const\s+|let\s+|var\s+)([a-zA-Z0-9_]+)\s*=\s*(?:async\s*)?\([^)]*\)\s*=>/g;
+    while ((match = funcRegex.exec(content)) !== null) {
+      methods.add(match[1]);
+    }
+    // Function declarations: function foo() {
+    const funcDeclRegex = /(?:async\s+)?function\s+([a-zA-Z0-9_]+)\s*\(/g;
+    while ((match = funcDeclRegex.exec(content)) !== null) {
+      methods.add(match[1]);
+    }
+    return methods;
+  }
+
+  const oldMethods = getDeclaredMethods(oldContent);
+  const newMethods = getDeclaredMethods(newContent);
+
+  const deletedMethods = [];
+  for (const m of oldMethods) {
+    if (!newMethods.has(m)) {
+      deletedMethods.push(m);
+    }
+  }
+
+  if (deletedMethods.length === 0) return null;
+
+  const cleanNewContent = newContent
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/\/\/.*/g, "");
+
+  // Scan the project files to see if any of these deleted methods are still referenced
+  const { globSync } = require('glob');
+  const files = globSync("**/*.{js,ts,jsx,tsx,mjs,cjs}", {
+    cwd: process.cwd(),
+    absolute: true,
+    ignore: ["**/node_modules/**", "**/dist/**", "**/ds_config/**", "**/.git/**"]
+  });
+
+  for (const deletedMethod of deletedMethods) {
+    const regex = new RegExp(`\\b${deletedMethod}\\b`);
+    
+    // Check in the modified file itself first
+    const occurrencesInNewFile = (cleanNewContent.match(new RegExp(`\\b${deletedMethod}\\b`, 'g')) || []).length;
+    if (occurrencesInNewFile > 0) {
+      return {
+        success: false,
+        error: `Linker Check Failed: Method/Function '${deletedMethod}' was deleted from '${path.basename(filePath)}', but references to it still exist in the same file.`
+      };
+    }
+
+    if (COMMON_WORDS.has(deletedMethod)) continue;
+
+    for (const f of files) {
+      if (path.resolve(f) === path.resolve(filePath)) continue;
+      const fileContent = fs.readFileSync(f, "utf8");
+      const cleanFileContent = fileContent
+        .replace(/\/\*[\s\S]*?\*\//g, "")
+        .replace(/\/\/.*/g, "");
+      if (regex.test(cleanFileContent)) {
+        return {
+          success: false,
+          error: `Linker Check Failed: Method/Function '${deletedMethod}' was deleted from '${path.basename(filePath)}', but it is still referenced in '${path.relative(process.cwd(), f)}'.`
+        };
+      }
+    }
+  }
+
+  return null;
+}
+
+function verifyThirdPartyDependencies(filePath) {
+  if (!fs.existsSync(filePath)) return null;
+  const ext = path.extname(filePath).toLowerCase();
+  if (![".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"].includes(ext)) return null;
+
+  const content = fs.readFileSync(filePath, "utf8");
+
+  // Read package.json dependencies
+  let declaredDependencies = new Set();
+  const pkgPath = path.join(process.cwd(), "package.json");
+  if (fs.existsSync(pkgPath)) {
+    try {
+      const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+      if (pkg.dependencies) {
+        for (const dep of Object.keys(pkg.dependencies)) {
+          declaredDependencies.add(dep);
+        }
+      }
+      if (pkg.devDependencies) {
+        for (const dep of Object.keys(pkg.devDependencies)) {
+          declaredDependencies.add(dep);
+        }
+      }
+    } catch (e) {}
+  }
+
+  const builtins = new Set([
+    "assert", "async_hooks", "buffer", "child_process", "cluster", "console",
+    "constants", "crypto", "dgram", "dns", "domain", "events", "fs", "fs/promises",
+    "http", "http2", "https", "inspector", "module", "net", "os", "path", "perf_hooks",
+    "process", "punycode", "querystring", "readline", "repl", "stream", "string_decoder",
+    "sys", "timers", "tls", "trace_events", "tty", "url", "util", "v8", "vm", "wasi",
+    "worker_threads", "zlib"
+  ]);
+
+  // Extract non-relative imports/requires
+  const cjsRegex = /require\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
+  let match;
+  while ((match = cjsRegex.exec(content)) !== null) {
+    const importPath = match[1];
+    if (importPath.startsWith('.') || importPath.startsWith('/')) continue;
+    const pkgName = importPath.split('/')[0];
+    if (pkgName && !builtins.has(pkgName) && !declaredDependencies.has(pkgName)) {
+      return {
+        success: false,
+        error: `Linker Check Failed: Undeclared package dependency '${pkgName}' is required in '${path.basename(filePath)}'. Please add it to package.json dependencies first.`
+      };
+    }
+  }
+
+  // ES modules imports and calls
+  const esmRegex = /import\s+(?:[^'"]+\s+from\s+)?['"]([^'"]+)['"]/g;
+  while ((match = esmRegex.exec(content)) !== null) {
+    const importPath = match[1];
+    if (importPath.startsWith('.') || importPath.startsWith('/')) continue;
+    const pkgName = importPath.split('/')[0];
+    if (pkgName && !builtins.has(pkgName) && !declaredDependencies.has(pkgName)) {
+      return {
+        success: false,
+        error: `Linker Check Failed: Undeclared package dependency '${pkgName}' is imported in '${path.basename(filePath)}'. Please add it to package.json dependencies first.`
+      };
+    }
+  }
+
+  const importCallRegex = /import\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
+  while ((match = importCallRegex.exec(content)) !== null) {
+    const importPath = match[1];
+    if (importPath.startsWith('.') || importPath.startsWith('/')) continue;
+    const pkgName = importPath.split('/')[0];
+    if (pkgName && !builtins.has(pkgName) && !declaredDependencies.has(pkgName)) {
+      return {
+        success: false,
+        error: `Linker Check Failed: Undeclared package dependency '${pkgName}' is imported dynamically in '${path.basename(filePath)}'. Please add it to package.json dependencies first.`
+      };
+    }
+  }
+
+  return null;
+}
+
+function verifyNoConflictMarkers(filePath) {
+  if (!fs.existsSync(filePath)) return null;
+  const content = fs.readFileSync(filePath, "utf8");
+  if (/^[<>=]{7}(?:\s|$)/m.test(content)) {
+    return {
+      success: false,
+      error: `Linker Check Failed: Git conflict markers (e.g. <<<<<<<, =======, >>>>>>>) were detected in '${path.basename(filePath)}'. Please resolve them.`
+    };
+  }
+  return null;
+}
+
+function verifyJsonSyntax(filePath) {
+  if (!fs.existsSync(filePath)) return null;
+  if (path.extname(filePath).toLowerCase() === ".json") {
+    try {
+      JSON.parse(fs.readFileSync(filePath, "utf8"));
+    } catch (err) {
+      return {
+        success: false,
+        error: `Syntax Check Failed: '${path.basename(filePath)}' is not valid JSON:\n${err.message}`
+      };
+    }
+  }
+  return null;
+}
+
+function verifyFileShrinkage(filePath) {
+  if (!fs.existsSync(filePath)) return null;
+  const ext = path.extname(filePath).toLowerCase();
+  if (![".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".py", ".go"].includes(ext)) return null;
+
+  const { execSync } = require('child_process');
+  const relativePath = path.relative(process.cwd(), filePath);
+  
+  let oldContent = "";
+  try {
+    oldContent = execSync(`git show "HEAD:${relativePath}"`, { stdio: 'pipe' }).toString();
+  } catch (err) {
+    return null; // Skip if file is new
+  }
+
+  const newContent = fs.readFileSync(filePath, "utf8");
+  const oldLines = oldContent.split('\n').length;
+  const newLines = newContent.split('\n').length;
+
+  if (oldLines > 100 && newLines < oldLines * 0.7 && (oldLines - newLines) > 40) {
+    const shrinkPercent = Math.round(((oldLines - newLines) / oldLines) * 100);
+    return {
+      success: false,
+      error: `Linker Check Failed: Heuristic check failed. The line count of '${path.basename(filePath)}' decreased by ${shrinkPercent}% (from ${oldLines} to ${newLines} lines). Large code deletion or file truncation detected. Overwriting or truncating code is forbidden. If this deletion is intentional, please perform it in smaller, verified steps.`
+    };
+  }
+  return null;
+}
+
 async function runAutomaticVerification(modifiedFiles) {
   const { execSync } = require('child_process');
   const cwd = process.cwd();
   const config = loadConfig();
 
-  // 1. Check JS/TS Imports and Exports for mismatches
+  // 1. Check JS/TS Imports and Exports for mismatches, deleted references, undeclared dependencies, conflict markers, JSON syntax, and file shrinkage
   for (const file of modifiedFiles) {
-    const res = verifyImportsAndExports(file);
-    if (res && !res.success) {
-      return res;
-    }
+    let res = verifyNoConflictMarkers(file);
+    if (res && !res.success) return res;
+
+    res = verifyJsonSyntax(file);
+    if (res && !res.success) return res;
+
+    res = verifyImportsAndExports(file);
+    if (res && !res.success) return res;
+
+    res = verifyNoDeletedReferences(file);
+    if (res && !res.success) return res;
+
+    res = verifyThirdPartyDependencies(file);
+    if (res && !res.success) return res;
+
+    res = verifyFileShrinkage(file);
+    if (res && !res.success) return res;
   }
 
   // 1. User custom verification commands from config.json
@@ -481,8 +740,47 @@ function setBusy(val) {
   busy = val;
 }
 
+function handleGitDirtyWorkspace() {
+  const { execSync } = require('child_process');
+  try {
+    const status = execSync('git status --porcelain', { stdio: 'pipe' }).toString().trim();
+    if (status) {
+      const currentBranch = execSync('git rev-parse --abbrev-ref HEAD', { stdio: 'pipe' }).toString().trim();
+      execSync('git add -A', { stdio: 'pipe' });
+      execSync('git commit -m "[System Checkpoint] Auto-commit of uncommitted changes before deepseek-cli execution" --no-verify', { stdio: 'pipe' });
+      const newBranch = `ds-agent-${Date.now().toString(36)}`;
+      execSync(`git checkout -b ${newBranch}`, { stdio: 'pipe' });
+      
+      const logItems = tui.getLogItems();
+      logItems.push({
+        type: "status",
+        text: `[Git Guard] Dirty workspace detected. Auto-committed changes on branch '${currentBranch}' and switched to new autonomous branch '${newBranch}'.`
+      });
+      tui.renderLog();
+    }
+  } catch (err) {
+    // If not a git repo or fails, do nothing
+  }
+}
+
 async function ask(prompt) {
   busy = true;
+  let lastToolCalls = [];
+  function checkToolLoop(tool, params) {
+    const key = JSON.stringify({ tool, params });
+    if (lastToolCalls.length > 0 && lastToolCalls[lastToolCalls.length - 1] === key) {
+      let count = 1;
+      for (let i = lastToolCalls.length - 2; i >= 0; i--) {
+        if (lastToolCalls[i] === key) count++;
+        else break;
+      }
+      if (count >= 2) return true;
+    }
+    lastToolCalls.push(key);
+    if (lastToolCalls.length > 10) lastToolCalls.shift();
+    return false;
+  }
+
   tui.setAutoScroll(true);
   const brain = brainRegistry.getActiveBrain();
   
@@ -492,6 +790,7 @@ async function ask(prompt) {
 
   let sid = getCurrentSessionId();
   if (!sid) {
+    handleGitDirtyWorkspace();
     const ns = createSession(prompt.slice(0, 40));
     sid = ns.id;
     setCurrentSessionId(sid);
@@ -572,7 +871,17 @@ async function ask(prompt) {
   }
 
   try {
-    let currentPrompt = `[System Instructions]\n${getSystemPrompt(prompt)}\n\n[User Request]\n${prompt}`;
+    const checkpoints = require("../utils/checkpoints");
+    const revertInfo = checkpoints.getLastRevertedCheckpointInfo();
+    let promptTextForBrain = prompt;
+    if (revertInfo) {
+      promptTextForBrain = `[SYSTEM: The user reverted the workspace to checkpoint ${revertInfo.id} (created at ${new Date(revertInfo.timestamp).toLocaleTimeString()}). The current codebase has been restored to that state. Please review the codebase and continue accordingly.]\n\nUser prompt:\n${prompt}`;
+    }
+
+    const list = checkpoints.listCheckpoints();
+    const cp = list.length > 0 ? list[list.length - 1] : null;
+
+    let currentPrompt = `[System Instructions]\n${getSystemPrompt(promptTextForBrain)}\n\n[User Request]\n${promptTextForBrain}`;
 
 
 
@@ -748,6 +1057,9 @@ async function ask(prompt) {
               )
             );
             const executePromise = (async () => {
+              if (checkToolLoop(c.tool, c)) {
+                return `❌ Loop detected: Identical tool call was repeated 3 times consecutively. Aborting execution to prevent infinite looping.`;
+              }
               const t = tools[c.tool];
               if (t) {
                 try {
@@ -840,23 +1152,27 @@ async function ask(prompt) {
         tui.renderLog();
 
         let toolResult = "";
-        const localTool = tools[toolName];
-        if (localTool) {
-          try {
-            toolResult = await localTool.execute(toolParams);
-          } catch (e) {
-            toolResult = `[Tool Failed]\n${toolName}: ${e.message}\n\n(You MUST reply in valid JSON.)`;
-          }
+        if (checkToolLoop(toolName, toolParams)) {
+          toolResult = `❌ Loop detected: Identical tool call was repeated 3 times consecutively. Aborting execution to prevent infinite looping.`;
         } else {
-          const isMcp = mcpLoader.getRegistry().some((x) => x.name === toolName);
-          if (isMcp) {
+          const localTool = tools[toolName];
+          if (localTool) {
             try {
-              toolResult = await mcpLoader.callTool(toolName, toolParams);
+              toolResult = await localTool.execute(toolParams);
             } catch (e) {
-              toolResult = `[MCP Failed]\n${toolName}: ${e.message}\n\n(You MUST reply in valid JSON.)`;
+              toolResult = `[Tool Failed]\n${toolName}: ${e.message}\n\n(You MUST reply in valid JSON.)`;
             }
           } else {
-            toolResult = `Error: tool '${toolName}' not found locally or in MCP.`;
+            const isMcp = mcpLoader.getRegistry().some((x) => x.name === toolName);
+            if (isMcp) {
+              try {
+                toolResult = await mcpLoader.callTool(toolName, toolParams);
+              } catch (e) {
+                toolResult = `[MCP Failed]\n${toolName}: ${e.message}\n\n(You MUST reply in valid JSON.)`;
+              }
+            } else {
+              toolResult = `Error: tool '${toolName}' not found locally or in MCP.`;
+            }
           }
         }
 
@@ -918,9 +1234,73 @@ function syncSession(sid, prompt) {
   }
 }
 
+async function compactCurrentSession() {
+  const sid = getCurrentSessionId();
+  if (!sid) throw new Error("No active session to compact");
+
+  const compactPrompt = `Please summarize the entire conversation up to this point, excluding any tool calls, internal commands, or system messages. Focus on the key points, decisions, context, and important details. Output only the summary, no extra commentary. This summary will be used to start a fresh chat session to continue from where we left off.`;
+
+  const brain = brainRegistry.getActiveBrain();
+  if (!brain || typeof brain.getCompletionStream !== "function") {
+    throw new Error("No active brain capable of generating summary");
+  }
+
+  const logItems = tui.getLogItems();
+  const summaryItem = { type: "compact", message: "Requesting summary from AI..." };
+  logItems.push(summaryItem);
+  tui.renderLog();
+
+  let summaryText = "";
+  try {
+    const result = await brain.getCompletionStream(compactPrompt, {
+      onStartCalled: () => {},
+      onProgress: (progress) => {
+        if (progress.text && progress.text.length > summaryText.length) {
+          summaryText = progress.text;
+        }
+      }
+    });
+    summaryText = result.responseText || result.thinkingText || "";
+    if (!summaryText.trim()) throw new Error("Generated summary is empty");
+  } catch (err) {
+    const idx = logItems.indexOf(summaryItem);
+    if (idx !== -1) logItems.splice(idx, 1);
+    tui.renderLog();
+    throw new Error(`Failed to generate summary: ${err.message}`);
+  }
+
+  const idx = logItems.indexOf(summaryItem);
+  if (idx !== -1) logItems.splice(idx, 1);
+  tui.renderLog();
+
+  await brain.createNewChat();
+  await brain.sendPromptInNewChat(summaryText);
+
+  let newDeepseekId = null;
+  for (let i = 0; i < 10; i++) {
+    newDeepseekId = await brain.getCurrentDeepseekId();
+    if (newDeepseekId) break;
+    await new Promise(r => setTimeout(r, 500));
+  }
+  if (!newDeepseekId) {
+    throw new Error("Could not obtain deepseek_id after sending summary");
+  }
+
+  updateSessionDeepseekId(sid, newDeepseekId);
+
+  const sessions = getSessions();
+  const session = sessions.find(s => s.id === sid);
+  if (session && session.title && !session.title.startsWith("Compacted:")) {
+    updateSessionTitle(sid, `Compacted: ${session.title}`);
+  }
+
+  return { success: true, newDeepseekId };
+}
+
 module.exports = {
   ask,
   isBusy,
   setBusy,
   runAutomaticVerification,
+  compactCurrentSession,
 };

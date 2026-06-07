@@ -7,6 +7,11 @@ const { subAgentStorage } = require("../utils/config");
 
 const agentQueues = {};
 
+// Tools whose output must never be capped hard — sub-agents need real content
+const READ_ONLY_TOOLS = new Set([
+  'read_file', 'grep_search', 'list_directory', 'glob_search', 'file_info'
+]);
+
 const SUB_AGENT_REMINDER = `\n\n[Reminder: You MUST respond in English only. You can either invoke another tool using JSON, or output plain text to respond to the user if you are done.\n` +
   `JSON Format (Single):\n{"tool": "tool_name", "param1": "val"}\n` +
   `JSON Format (Parallel):\n{"tools": [{"name": "t1", "p1": "v1"}, {"name": "t2"}]}\n` +
@@ -166,13 +171,29 @@ function extractJSON(text, normalizeToolCall) {
   return null;
 }
 
-function safeTruncate(text) {
+function safeTruncate(text, toolName) {
   const { loadConfig } = require("../utils/config");
   const config = loadConfig();
-  const maxLength = config.max_tool_output_length ?? 4000;
+  const baseMax = config.max_tool_output_length ?? 4000;
+  // Read-only tools get 4x the limit — they need more context but still bounded
+  const maxLength = (toolName && READ_ONLY_TOOLS.has(toolName)) ? baseMax * 4 : baseMax;
   const s = String(text ?? "");
   if (s.length <= maxLength) return s;
-  return s.slice(0, maxLength) + `\n\n[truncated: ${s.length - maxLength} chars omitted]`;
+  const shownLines = s.slice(0, maxLength).split('\n').length;
+  const totalLines = s.split('\n').length;
+  return s.slice(0, maxLength) + `\n\n[truncated: showed ~${shownLines} of ${totalLines} lines. Use start_line/end_line to read the remaining content in chunks.]`;
+}
+
+// Block write_file on existing files — agents must use patch_file instead
+function guardWriteFile(toolName, toolParams) {
+  if (toolName !== 'write_file') return null;
+  const filePath = toolParams && toolParams.path;
+  if (!filePath) return null;
+  const resolved = require('path').resolve(filePath);
+  if (require('fs').existsSync(resolved)) {
+    return `[SYSTEM INTERCEPT - FORBIDDEN OPERATION]\nwrite_file was called on an EXISTING file: ${filePath}\nThis is FORBIDDEN. You MUST use patch_file or patch_multiple_files for surgical edits to existing files.\nUsing write_file on existing files risks silently deleting working code outside your intended change.\nRe-read the file with read_file, then use patch_file with start_line + end_line + new_content to make your edit.`;
+  }
+  return null;
 }
 
 module.exports = {
@@ -279,7 +300,7 @@ module.exports = {
         }
 
         // ── FINAL RESPONSE ──
-        if (!parsed || parsed.response !== undefined || !parsed.tool) {
+        if (!parsed || parsed.response !== undefined || (!parsed.tool && !parsed._isMulti)) {
           if (hasEditedFiles && !hasVerified) {
             // Run automatic verification before finishing within the sub-agent context
             const verificationResult = await subAgentStorage.run({ subAgentDir }, async () => {
@@ -336,12 +357,15 @@ module.exports = {
               const t = tools[c.tool];
               if (t) {
                 try {
+                  // Guard: block write_file on existing files
+                  const writeGuard = guardWriteFile(c.tool, c);
+                  if (writeGuard) return writeGuard;
                   const res = await subAgentStorage.run({ subAgentDir }, async () => {
                     return await t.execute(c);
                   });
-                  return safeTruncate(String(res ?? ""));
+                  return safeTruncate(String(res ?? ""), c.tool);
                 } catch (e) {
-                  return safeTruncate(`Error: ${e.message}`);
+                  return safeTruncate(`Error: ${e.message}`, c.tool);
                 }
               }
               const isMcp = mcpLoader.getRegistry().some((x) => x.name === c.tool);
@@ -350,9 +374,9 @@ module.exports = {
                   const res = await subAgentStorage.run({ subAgentDir }, async () => {
                     return await mcpLoader.callTool(c.tool, c);
                   });
-                  return safeTruncate(String(res ?? ""));
+                  return safeTruncate(String(res ?? ""), c.tool);
                 } catch (e) {
-                  return safeTruncate(`MCP error: ${e.message}`);
+                  return safeTruncate(`MCP error: ${e.message}`, c.tool);
                 }
               }
               return `Error: tool '${c.tool}' not found.`;
@@ -403,6 +427,16 @@ module.exports = {
             hasVerified = true;
           }
 
+          // Guard: block write_file on existing files
+          const writeGuard = guardWriteFile(toolName, toolParams);
+          if (writeGuard) {
+            const idx2 = tui.getLogItems().indexOf(statusItem);
+            if (idx2 !== -1) tui.getLogItems().splice(idx2, 1);
+            tui.renderLog();
+            currentPrompt = `[Tool Output for ${toolName}]\n${writeGuard}${SUB_AGENT_REMINDER}`;
+            continue;
+          }
+
           let toolResult = "";
           const localTool = tools[toolName];
           if (localTool) {
@@ -433,7 +467,7 @@ module.exports = {
           if (idx !== -1) tui.getLogItems().splice(idx, 1);
           tui.renderLog();
 
-          toolResult = safeTruncate(String(toolResult));
+          toolResult = safeTruncate(String(toolResult), toolName);
           currentPrompt = `[Tool Output for ${toolName}]\n${toolResult}${SUB_AGENT_REMINDER}`;
         }
       }

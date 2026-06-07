@@ -26,6 +26,7 @@ function ensureConfigDir() {
 function loadConfig() {
   ensureConfigDir();
   const defaults = {
+    allow_self_modification: false,
     allowed_directories: [],
     blocked_commands: [],
     max_tool_output_length: 4000,
