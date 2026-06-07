@@ -787,9 +787,8 @@ function setBusy(val) {
 function showConfirmation(message) {
   return new Promise((resolve) => {
     const blessed = require("blessed");
-    const screen = tui.scr; // reuse the global blessed screen
+    const screen = tui.scr;
 
-    // Create a modal overlay
     const overlay = blessed.box({
       parent: screen,
       top: "center",
@@ -797,15 +796,12 @@ function showConfirmation(message) {
       width: "50%",
       height: 7,
       border: { type: "line" },
-      style: {
-        border: { fg: "#ffa500" },
-        bg: "default",
-      },
+      style: { border: { fg: "#ffa500" }, bg: "default" },
       keys: true,
       vi: true,
     });
 
-    const question = blessed.text({
+    blessed.text({
       parent: overlay,
       top: 1,
       left: 2,
@@ -821,15 +817,10 @@ function showConfirmation(message) {
       width: 10,
       height: 1,
       content: " Yes ",
-      style: {
-        bg: "#2a2a2a",
-        fg: "#00ff00",
-        focus: { bg: "#00ff00", fg: "#000000" },
-      },
+      style: { bg: "#2a2a2a", fg: "#00ff00", focus: { bg: "#00ff00", fg: "#000000" } },
       mouse: true,
       keys: true,
       shrink: true,
-      padding: { left: 1, right: 1 },
     });
 
     const noBtn = blessed.button({
@@ -839,35 +830,25 @@ function showConfirmation(message) {
       width: 10,
       height: 1,
       content: " No ",
-      style: {
-        bg: "#2a2a2a",
-        fg: "#ff0000",
-        focus: { bg: "#ff0000", fg: "#000000" },
-      },
+      style: { bg: "#2a2a2a", fg: "#ff0000", focus: { bg: "#ff0000", fg: "#000000" } },
       mouse: true,
       keys: true,
       shrink: true,
-      padding: { left: 1, right: 1 },
     });
 
-    // Focus on Yes by default
     yesBtn.focus();
 
     const cleanup = (result) => {
       overlay.destroy();
       screen.render();
-      resolve(result);
+      resolve(result); // result should be true or false
     };
 
     yesBtn.on("press", () => cleanup(true));
-    noBtn.on("press", () => cleanup(false));
-
-    // Also allow Enter on focused button
+    noBtn.on("press", () => cleanup(false));      // Explicit false
     yesBtn.key(["enter"], () => cleanup(true));
-    noBtn.key(["enter"], () => cleanup(false));
-
-    // Escape cancels (default = no)
-    overlay.key(["escape"], () => cleanup(false));
+    noBtn.key(["enter"], () => cleanup(false));   // Explicit false
+    overlay.key(["escape"], () => cleanup(false));// Escape = false
 
     screen.render();
   });
@@ -878,39 +859,27 @@ async function handleGitDirtyWorkspace() {
   try {
     const status = execSync('git status --porcelain', { stdio: 'pipe' }).toString().trim();
     if (status) {
-      // Ask for confirmation
-      const confirmed = await showConfirmation('Uncommitted changes detected. Continue?'); if (!confirmed) {
+      const confirmed = await showConfirmation('Uncommitted changes detected. Continue?');
+      if (!confirmed) {
         const logItems = tui.getLogItems();
         logItems.push({
           type: "error",
-          text: "Aborted due to uncommitted changes."
+          text: "Operation aborted. Uncommitted changes remain."
         });
         tui.renderLog();
-        throw new Error('User aborted due to uncommitted changes');
+        const abortError = new Error('ABORTED_BY_USER');
+        abortError.code = 'ABORTED';
+        throw abortError;
       }
-
-      const currentBranch = execSync('git rev-parse --abbrev-ref HEAD', { stdio: 'pipe' }).toString().trim();
-      execSync('git add -A', { stdio: 'pipe' });
-      execSync('git commit -m "[System Checkpoint] Auto-commit of uncommitted changes before deepseek-cli execution" --no-verify', { stdio: 'pipe' });
-      const newBranch = `ds-agent-${Date.now().toString(36)}`;
-      execSync(`git checkout -b ${newBranch}`, { stdio: 'pipe' });
-
-      const logItems = tui.getLogItems();
-      logItems.push({
-        type: "status",
-        text: `[Git Guard] Dirty workspace detected. Auto-committed changes on branch '${currentBranch}' and switched to new autonomous branch '${newBranch}'.`
-      });
-      tui.renderLog();
+      // User confirmed, continue without any git operations and without extra message
     }
   } catch (err) {
-    // If not a git repo or user aborted, propagate the abort error
-    if (err.message === 'User aborted due to uncommitted changes') {
+    if (err.message === 'ABORTED_BY_USER') {
       throw err;
     }
-    // Otherwise ignore (maybe not a git repo)
+    // Ignore other errors (non-git repo, git command failure, etc.)
   }
 }
-
 async function ask(prompt) {
   busy = true;
   let lastToolCalls = [];
@@ -934,8 +903,16 @@ async function ask(prompt) {
 
   let sid = getCurrentSessionId();
   if (!sid) {
-    // Await the git dirty workspace handler (which may throw if user aborts)
-    await handleGitDirtyWorkspace();
+    try {
+      await handleGitDirtyWorkspace();
+    } catch (err) {
+      if (err.message === 'ABORTED_BY_USER') {
+        busy = false;
+        tui.stopGlobalSpinner();
+        return; // Stop execution, do not proceed further
+      }
+      throw err; // Re‑throw unexpected errors
+    }
     const ns = createSession(prompt.slice(0, 40));
     sid = ns.id;
     setCurrentSessionId(sid);
