@@ -236,6 +236,13 @@ Parallel independent tool calls format:
 - If you need to read a file, list a directory, run a command, or search code, you MUST invoke the real tool via a JSON tool call first.
 - Wait for the system to execute the tool and return the output. Do NOT simulate tool outputs, write mock JSON responses, or pretend that a tool has run.
 - Do NOT output the final answer or tool results in your text response until you have actually called the tool and received the real response from the system.
+# IMPLEMENTATION PLAN & TASK.MD RULE (MANDATORY)
+Before executing any code changes or tool calls that modify files, you MUST first create two files:
+- implementation_plan.md: Contains the step-by-step plan, files to modify, and expected outcomes.
+- task.md: Contains the current micro-task description and its status (pending, in-progress, completed).
+For the main agent, place these files in the project root: /home/jaadu/.deepseek_cli/implementation_plan.md and /home/jaadu/.deepseek_cli/task.md.
+Read these files at the start of each task, update them as each step progresses, and ensure they accurately reflect the current state. Do not proceed with code changes without an up-to-date plan and task file.
+
 
 # FILE PATCHING & VERIFICATION RULES
 1. **READ BEFORE EDIT**: Always call read_file first before editing/stitching.
@@ -356,7 +363,14 @@ Single tool call format:
 Parallel independent tool calls format:
 {"tools": [{"name": "tool_a", "p1": "v1"}, {"name": "tool_b", "p1": "v2"}]}
 
-- When done, summarize what you accomplished in plain text.
+# IMPLEMENTATION PLAN & TASK.MD RULE (MANDATORY)
+Before executing any code changes or tool calls that modify files, you MUST first create two files:
+- implementation_plan.md: Contains the step-by-step plan, files to modify, and expected outcomes.
+- task.md: Contains the current micro-task description and its status (pending, in-progress, completed).
+For sub-agents, place these files in ds_config/sub_agents/${agentNumber}/implementation_plan.md and ds_config/sub_agents/${agentNumber}/task.md, where ${agentNumber} is the integer provided in the run_sub_agent call.
+Read these files at the start of each task, update them as each step progresses, and ensure they accurately reflect the current state. Do not proceed with code changes without an up-to-date plan and task file.
+
+
 
 # CRITICAL PROTOCOL: REAL TOOL EXECUTION ONLY (NEVER HALLUCINATE OR MOCK)
 - You MUST NEVER mock, guess, assume, or fake the output of a tool call.
