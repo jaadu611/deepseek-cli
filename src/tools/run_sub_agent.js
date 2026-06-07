@@ -226,6 +226,22 @@ module.exports = {
     const { tools, getSubAgentSystemPrompt, normalizeToolCall } = require("./index");
     const { runAutomaticVerification } = require("../core/orchestrator");
 
+    let lastToolCalls = [];
+    function checkToolLoop(tool, params) {
+      const key = JSON.stringify({ tool, params });
+      if (lastToolCalls.length > 0 && lastToolCalls[lastToolCalls.length - 1] === key) {
+        let count = 1;
+        for (let i = lastToolCalls.length - 2; i >= 0; i--) {
+          if (lastToolCalls[i] === key) count++;
+          else break;
+        }
+        if (count >= 2) return true;
+      }
+      lastToolCalls.push(key);
+      if (lastToolCalls.length > 10) lastToolCalls.shift();
+      return false;
+    }
+
     // Setup sub-agent workspace folder
     const subAgentBaseDir = path.join(process.cwd(), "ds_config", "sub_agents", String(agentNumber));
     const subAgentDir = path.join(subAgentBaseDir, "ds_config");
@@ -304,7 +320,7 @@ module.exports = {
           if (hasEditedFiles && !hasVerified) {
             // Run automatic verification before finishing within the sub-agent context
             const verificationResult = await subAgentStorage.run({ subAgentDir }, async () => {
-              return await runAutomaticVerification(modifiedFiles);
+              return await runAutomaticVerification(modifiedFiles, responseText || thinkingText);
             });
             if (!verificationResult.success) {
               const interceptMsg = `[SYSTEM INTERCEPT - VERIFICATION FAILED]\n${verificationResult.error}\n\nYou modified code but verification failed. You MUST fix these errors before returning a final response.`;
@@ -353,6 +369,9 @@ module.exports = {
             batch.map(async (c) => {
               if (c.tool === "run_sub_agent") {
                 return "Error: Sub-agents are forbidden from calling run_sub_agent tool.";
+              }
+              if (checkToolLoop(c.tool, c)) {
+                return `❌ Loop detected: Identical tool call was repeated 3 times consecutively. Aborting execution to prevent infinite looping.`;
               }
               const t = tools[c.tool];
               if (t) {
@@ -434,6 +453,14 @@ module.exports = {
             if (idx2 !== -1) tui.getLogItems().splice(idx2, 1);
             tui.renderLog();
             currentPrompt = `[Tool Output for ${toolName}]\n${writeGuard}${SUB_AGENT_REMINDER}`;
+            continue;
+          }
+
+          if (checkToolLoop(toolName, toolParams)) {
+            const idx2 = tui.getLogItems().indexOf(statusItem);
+            if (idx2 !== -1) tui.getLogItems().splice(idx2, 1);
+            tui.renderLog();
+            currentPrompt = `[Tool Output for ${toolName}]\n❌ Loop detected: Identical tool call was repeated 3 times consecutively. Aborting execution to prevent infinite looping.${SUB_AGENT_REMINDER}`;
             continue;
           }
 

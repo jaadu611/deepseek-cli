@@ -505,10 +505,18 @@ function verifyJsonSyntax(filePath) {
   return null;
 }
 
-function verifyFileShrinkage(filePath) {
+function verifyFileShrinkage(filePath, latestResponseText) {
   if (!fs.existsSync(filePath)) return null;
   const ext = path.extname(filePath).toLowerCase();
   if (![".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".py", ".go"].includes(ext)) return null;
+
+  // If the agent explains the deletion, bypass the check
+  if (latestResponseText && typeof latestResponseText === 'string') {
+    const bypassRegex = /\b(delete|remove|cleanup|refactor|bypass|intentional|deprecated|simplify|prune)\b/i;
+    if (bypassRegex.test(latestResponseText)) {
+      return null;
+    }
+  }
 
   const { execSync } = require('child_process');
   const relativePath = path.relative(process.cwd(), filePath);
@@ -534,7 +542,44 @@ function verifyFileShrinkage(filePath) {
   return null;
 }
 
-async function runAutomaticVerification(modifiedFiles) {
+/**
+ * Validates a sub-agent prompt is specific enough to dispatch safely.
+ * Returns an error string if the prompt is too vague, null if it passes.
+ */
+function validateSubAgentPrompt(prompt) {
+  if (!prompt || typeof prompt !== 'string') {
+    return `[SYSTEM INTERCEPT - INVALID SUB-AGENT PROMPT]\nThe 'prompt' field is empty or missing. Sub-agent calls MUST include a detailed prompt.`;
+  }
+
+  const trimmed = prompt.trim();
+
+  // Minimum length: prompts shorter than 120 chars are almost certainly too vague
+  if (trimmed.length < 120) {
+    return `[SYSTEM INTERCEPT - SUB-AGENT PROMPT TOO VAGUE]\nYour run_sub_agent prompt is only ${trimmed.length} characters long. Sub-agent prompts MUST be at minimum 120 characters and include:\n  1. The exact file path(s) to edit.\n  2. The precise function/class/section to modify.\n  3. The exact new code or logic to implement (no placeholders).\n  4. Any interface contracts (function signatures, return types, exports).\n  5. What NOT to touch.\n\nRewrite the prompt with these details before dispatching the sub-agent.`;
+  }
+
+  // Must reference at least one file path (contains a slash and a recognizable extension)
+  const hasFilePath = /[\w./\\-]+\.(?:js|ts|jsx|tsx|mjs|cjs|py|go|rs|json|md|css|sh)/.test(trimmed);
+  if (!hasFilePath) {
+    return `[SYSTEM INTERCEPT - SUB-AGENT PROMPT MISSING FILE TARGET]\nYour run_sub_agent prompt does not reference any target file. Sub-agent prompts MUST specify the exact file path(s) to read or modify (e.g. 'src/core/orchestrator.js').\n\nRewrite the prompt to include specific file targets.`;
+  }
+
+  // Must not be all vague action words with no specifics
+  const vagueOnlyRegex = /^\s*(implement|add|create|update|fix|make|change|do|handle|write)\s+(it|this|that|the feature|the fix|the change|the code)\s*\.?\s*$/i;
+  if (vagueOnlyRegex.test(trimmed)) {
+    return `[SYSTEM INTERCEPT - SUB-AGENT PROMPT IS VAGUE COMMAND]\nYour run_sub_agent prompt is a vague command with no specifics. Rephrase with exact implementation details.`;
+  }
+
+  // Must not contain lazy placeholder markers
+  const placeholderRegex = /(\.{3}\s*rest of|TODO:|FIXME:|placeholder|\[your code here\]|\/\/ fill in)/i;
+  if (placeholderRegex.test(trimmed)) {
+    return `[SYSTEM INTERCEPT - SUB-AGENT PROMPT CONTAINS PLACEHOLDERS]\nYour run_sub_agent prompt contains placeholder text (e.g. '... rest of', 'TODO', 'fill in'). Sub-agent prompts MUST contain the complete, concrete specification — no lazy shortcuts.`;
+  }
+
+  return null; // Passes all checks
+}
+
+async function runAutomaticVerification(modifiedFiles, latestResponseText) {
   const { execSync } = require('child_process');
   const cwd = process.cwd();
   const config = loadConfig();
@@ -556,7 +601,7 @@ async function runAutomaticVerification(modifiedFiles) {
     res = verifyThirdPartyDependencies(file);
     if (res && !res.success) return res;
 
-    res = verifyFileShrinkage(file);
+    res = verifyFileShrinkage(file, latestResponseText);
     if (res && !res.success) return res;
   }
 
@@ -931,7 +976,7 @@ async function ask(prompt) {
       // FINAL ANSWER
       if (!parsed || parsed.response !== undefined) {
         if (hasEditedFiles && !hasVerified) {
-          const verificationResult = await runAutomaticVerification(modifiedFiles);
+          const verificationResult = await runAutomaticVerification(modifiedFiles, responseText || thinkingText);
           if (!verificationResult.success) {
             const interceptMsg = `[SYSTEM INTERCEPT - VERIFICATION FAILED]\n${verificationResult.error}\n\nYou modified code but verification failed. You MUST fix these errors before returning a final response.`;
             currentPrompt = interceptMsg;
@@ -951,6 +996,46 @@ async function ask(prompt) {
                 if (idx !== -1) logItems.splice(idx, 1);
                 tui.renderLog();
               }, 3000);
+            }
+          }
+
+          // ── Dead Code & Unused Import Guard (post-verification, non-blocking) ──
+          // After verification passes, ask the main brain to self-analyse the modified files
+          // for dead code and unused imports. Results are shown in TUI only — no rollback.
+          if (hasVerified && modifiedFiles.size > 0) {
+            try {
+              const fileList = Array.from(modifiedFiles)
+                .filter(f => fs.existsSync(f))
+                .map(f => path.relative(process.cwd(), f))
+                .join(', ');
+              if (fileList) {
+                const deadCodePrompt =
+                  `[SYSTEM: Dead Code & Unused Import Scan]\n` +
+                  `The following files were just modified: ${fileList}\n` +
+                  `Read each file and identify:\n` +
+                  `  1. Any imported symbols (require/import) that are never used in the file body.\n` +
+                  `  2. Any declared functions, classes, or variables that are defined but never called or referenced within the project.\n` +
+                  `  3. Any exports that are defined but not imported anywhere in the project.\n` +
+                  `Respond ONLY with a concise markdown bullet list of findings (file:line — description).\n` +
+                  `If there are no findings, respond with exactly: "No dead code or unused imports detected."\n` +
+                  `Do NOT call any tools. Do NOT rewrite any code. This is analysis only.`;
+
+                const deadCodeResult = await brain.getCompletionStream(deadCodePrompt, {
+                  onStartCalled: () => {},
+                  onProgress: () => {}
+                });
+                const dcText = (deadCodeResult.responseText || "").trim();
+                if (dcText && !dcText.toLowerCase().startsWith("no dead code")) {
+                  const dcItem = {
+                    type: "status",
+                    text: `[Dead Code Scan]\n${dcText}`
+                  };
+                  logItems.push(dcItem);
+                  tui.renderLog();
+                }
+              }
+            } catch (_dcErr) {
+              // Non-critical: dead code scan failure must never block the session
             }
           }
         }
@@ -1022,6 +1107,14 @@ async function ask(prompt) {
         for (const t of toolItems) logItems.push(t);
         for (const c of batch) {
           saveMessage(sid, "tool_call", c.tool, { params: c });
+          // ── Sub-agent prompt strictness guard (parallel batch) ──
+          if (c.tool === "run_sub_agent") {
+            const promptError = validateSubAgentPrompt(c.prompt);
+            if (promptError) {
+              // Swap this call to an error result immediately
+              c._intercepted = promptError;
+            }
+          }
           if (["write_file", "patch_multiple_files", "patch_file"].includes(c.tool)) {
             hasEditedFiles = true;
             hasVerified = false;
@@ -1057,6 +1150,10 @@ async function ask(prompt) {
               )
             );
             const executePromise = (async () => {
+              // Sub-agent prompt strictness: intercept before executing
+              if (c._intercepted) {
+                return c._intercepted;
+              }
               if (checkToolLoop(c.tool, c)) {
                 return `❌ Loop detected: Identical tool call was repeated 3 times consecutively. Aborting execution to prevent infinite looping.`;
               }
@@ -1127,7 +1224,31 @@ async function ask(prompt) {
         };
         logItems.push(toolItem);
         saveMessage(sid, "tool_call", toolName, { params: toolParams });
-        
+
+        // ── Sub-agent prompt strictness guard (single call) ──
+        if (toolName === "run_sub_agent") {
+          const promptError = validateSubAgentPrompt(toolParams.prompt);
+          if (promptError) {
+            const toolItem2 = {
+              type: "tool",
+              name: toolName,
+              params: toolParams,
+              status: "completed",
+              result: promptError,
+              expanded: false,
+            };
+            logItems.push(toolItem2);
+            saveMessage(sid, "tool_result", promptError, { tool: toolName });
+            const FORMAT_REMINDER2 = `\n\n[Reminder: You MUST respond in English only. Fix the sub-agent prompt and retry.]`;
+            currentPrompt = `[Tool Output for ${toolName}]\n${promptError}${FORMAT_REMINDER2}`;
+            isInitial = false;
+            dsItem = { type: "deepseek", text: "", spinning: true };
+            logItems.push(dsItem);
+            tui.renderLog();
+            continue;
+          }
+        }
+
         if (["write_file", "patch_multiple_files", "patch_file"].includes(toolName)) {
           hasEditedFiles = true;
           hasVerified = false;

@@ -20,8 +20,18 @@ module.exports = {
   },
   async execute(params) {
     let { path: filePath, start_line, end_line, new_content, find_string, replace_string } = params;
-    const { resolveSubAgentPath } = require('../utils/config');
+    const { resolveSubAgentPath, loadConfig } = require('../utils/config');
     filePath = resolveSubAgentPath(filePath);
+
+    // CLI Sandbox Isolation Guard
+    const config = loadConfig();
+    if (!config.allow_self_modification && process.env.ALLOW_CLI_EDIT !== '1') {
+      const cliDir = path.resolve(__dirname, '../../');
+      const resolvedPath = path.resolve(filePath);
+      if (resolvedPath.startsWith(cliDir)) {
+        return `❌ Edit rejected: Modifying CLI installation files is forbidden. To allow this, run the CLI with the ALLOW_CLI_EDIT=1 environment variable.`;
+      }
+    }
     // Lazy Deletion Guard
     const LAZY_REGEX = /(\/\/|\/\*|\#|\-\-)\s*(\.\.\.|existing|rest|todo\s*:?\s*rest|placeholder|same|remains)/i;
     if ((new_content !== undefined && LAZY_REGEX.test(new_content)) || (replace_string !== undefined && LAZY_REGEX.test(replace_string))) {

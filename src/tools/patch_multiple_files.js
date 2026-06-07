@@ -28,10 +28,20 @@ module.exports = {
     required: ["patches"]
   },
   async execute({ patches }) {
-    const { resolveSubAgentPath } = require('../utils/config');
+    const { resolveSubAgentPath, loadConfig } = require('../utils/config');
+    const config = loadConfig();
+    const cliDir = path.resolve(__dirname, '../../');
     for (const p of patches) {
       if (p && p.path) {
         p.path = resolveSubAgentPath(p.path);
+        
+        // CLI Sandbox Isolation Guard
+        if (!config.allow_self_modification && process.env.ALLOW_CLI_EDIT !== '1') {
+          const resolvedPath = path.resolve(p.path);
+          if (resolvedPath.startsWith(cliDir)) {
+            return `❌ Edit rejected: Modifying CLI installation files is forbidden. To allow this, run the CLI with the ALLOW_CLI_EDIT=1 environment variable.`;
+          }
+        }
       }
     }
     const backups = []; // each entry: { original, backupPath }

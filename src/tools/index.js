@@ -207,7 +207,17 @@ function getSystemPrompt(userPrompt) {
 - After understanding the codebase context and before dispatching any sub-agent or writing the plan, you MUST call the sequential thinking tool (available as an MCP tool, search the registry/MCP lists to locate its name, e.g. "sequential_thinking") to structure your reasoning, analyze the design, and define precise parameters and interface contracts.
 
 # SUB-AGENT DISPATCH PROTOCOL
-When calling "run_sub_agent", you MUST specify ONLY the exact, atomic micro-step job that the sub-agent must perform. Do not include formatting rules, execution instructions, or detailed developer constitution rules (these are automatically injected as system instructions for the sub-agent).
+When calling "run_sub_agent", you MUST write a HIGH-DENSITY, UNAMBIGUOUS prompt. A system guard will REJECT your prompt and force you to retry if any of the following rules are violated:
+
+**MANDATORY CHECKLIST — Every sub-agent prompt MUST:**
+1. **Be at least 120 characters long.** Short prompts are a sign of vagueness and will be rejected.
+2. **Reference the exact file path(s)** to read or modify (e.g. 'src/core/orchestrator.js'). No file path = rejected.
+3. **State the precise function, class, or line range** to add/modify/delete.
+4. **Include the exact logic or code to implement** — no "TODO", "fill in", "... rest of code", or vague filler phrases.
+5. **Define interface contracts** where applicable: function signatures, parameter types, return values, and export names.
+6. **Explicitly state what NOT to touch** to prevent unintended side effects on adjacent code.
+
+Do NOT include formatting rules, execution instructions, or developer constitution rules in the prompt — these are automatically injected as system instructions for the sub-agent.
 
 # LANGUAGE & OUTPUT RULES
 - You MUST respond in English at all times.

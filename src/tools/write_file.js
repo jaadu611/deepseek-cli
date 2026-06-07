@@ -20,11 +20,11 @@ module.exports = {
     
     // CLI Sandbox Isolation Guard
     const config = loadConfig();
-    if (!config.allow_self_modification) {
+    if (!config.allow_self_modification && process.env.ALLOW_CLI_EDIT !== '1') {
       const cliDir = path.resolve(__dirname, '../../');
       const resolvedPath = path.resolve(filePath);
       if (resolvedPath.startsWith(cliDir)) {
-        return `❌ Edit rejected: Modifying CLI installation files is forbidden. To allow this, set "allow_self_modification": true in config.json.`;
+        return `❌ Edit rejected: Modifying CLI installation files is forbidden. To allow this, run the CLI with the ALLOW_CLI_EDIT=1 environment variable.`;
       }
     }
 
