@@ -15,7 +15,6 @@ const {
   updateSessionDeepseekId,
   getFilteredChatHistory,
 } = require("./history");
-
 let busy = false;
 
 // ── JSON extraction ───────────────────────────────────────────────────────────
@@ -35,7 +34,7 @@ function extractJSON(text) {
   if (!text) return null;
 
   const parsedObjects = [];
-  
+
   // First, try to extract JSON from markdown code blocks
   const codeBlockRegex = /```(?:json)?\s*([\s\S]*?)```/g;
   let match;
@@ -116,7 +115,7 @@ function extractJSON(text) {
               i = endIdx + 1;
               continue;
             }
-          } catch (e) {}
+          } catch (e) { }
         }
       }
       i = startIdx + 1;
@@ -167,7 +166,7 @@ function extractJSON(text) {
           return normalized;
         }
       }
-    } catch (err) {}
+    } catch (err) { }
   }
 
   return null;
@@ -291,12 +290,12 @@ function verifyImportsAndExports(filePath) {
 }
 
 const COMMON_WORDS = new Set([
-  'close', 'init', 'start', 'stop', 'run', 'execute', 'status', 'config', 'name', 
-  'get', 'set', 'update', 'clear', 'create', 'delete', 'reset', 'load', 'save', 
-  'index', 'type', 'error', 'result', 'success', 'log', 'open', 'send', 'connect', 
-  'setup', 'process', 'handle', 'wait', 'show', 'hide', 'render', 'add', 'remove', 
-  'has', 'find', 'all', 'map', 'filter', 'reduce', 'keys', 'values', 'entries', 
-  'push', 'pop', 'shift', 'unshift', 'splice', 'slice', 'join', 'split', 'replace', 
+  'close', 'init', 'start', 'stop', 'run', 'execute', 'status', 'config', 'name',
+  'get', 'set', 'update', 'clear', 'create', 'delete', 'reset', 'load', 'save',
+  'index', 'type', 'error', 'result', 'success', 'log', 'open', 'send', 'connect',
+  'setup', 'process', 'handle', 'wait', 'show', 'hide', 'render', 'add', 'remove',
+  'has', 'find', 'all', 'map', 'filter', 'reduce', 'keys', 'values', 'entries',
+  'push', 'pop', 'shift', 'unshift', 'splice', 'slice', 'join', 'split', 'replace',
   'match', 'test', 'exec', 'toString', 'then', 'catch', 'finally'
 ]);
 
@@ -307,7 +306,7 @@ function verifyNoDeletedReferences(filePath) {
 
   const { execSync } = require('child_process');
   const relativePath = path.relative(process.cwd(), filePath);
-  
+
   let oldContent = "";
   try {
     oldContent = execSync(`git show "HEAD:${relativePath}"`, { stdio: 'pipe' }).toString();
@@ -368,7 +367,7 @@ function verifyNoDeletedReferences(filePath) {
 
   for (const deletedMethod of deletedMethods) {
     const regex = new RegExp(`\\b${deletedMethod}\\b`);
-    
+
     // Check in the modified file itself first
     const occurrencesInNewFile = (cleanNewContent.match(new RegExp(`\\b${deletedMethod}\\b`, 'g')) || []).length;
     if (occurrencesInNewFile > 0) {
@@ -421,7 +420,7 @@ function verifyThirdPartyDependencies(filePath) {
           declaredDependencies.add(dep);
         }
       }
-    } catch (e) {}
+    } catch (e) { }
   }
 
   const builtins = new Set([
@@ -520,7 +519,7 @@ function verifyFileShrinkage(filePath, latestResponseText) {
 
   const { execSync } = require('child_process');
   const relativePath = path.relative(process.cwd(), filePath);
-  
+
   let oldContent = "";
   try {
     oldContent = execSync(`git show "HEAD:${relativePath}"`, { stdio: 'pipe' }).toString();
@@ -675,7 +674,7 @@ async function runAutomaticVerification(modifiedFiles, latestResponseText) {
             let cmd = `npm run ${scriptName}`;
             if (fs.existsSync(path.join(cwd, "pnpm-lock.yaml"))) cmd = `pnpm run ${scriptName}`;
             else if (fs.existsSync(path.join(cwd, "yarn.lock"))) cmd = `yarn run ${scriptName}`;
-            
+
             try {
               execSync(cmd, { stdio: "pipe", cwd });
             } catch (err) {
@@ -688,7 +687,7 @@ async function runAutomaticVerification(modifiedFiles, latestResponseText) {
           }
         }
       }
-    } catch (e) {}
+    } catch (e) { }
   }
 
   // 5. Run project tests
@@ -700,7 +699,7 @@ async function runAutomaticVerification(modifiedFiles, latestResponseText) {
         let cmd = "npm test";
         if (fs.existsSync(path.join(cwd, "pnpm-lock.yaml"))) cmd = "pnpm test";
         else if (fs.existsSync(path.join(cwd, "yarn.lock"))) cmd = "yarn test";
-        
+
         const output = execSync(cmd, { stdio: "pipe", cwd });
         return { success: true, message: `All verification checks and tests passed.` };
       }
@@ -747,7 +746,7 @@ async function runAutomaticVerification(modifiedFiles, latestResponseText) {
     try {
       execSync("pytest --version", { stdio: "ignore" });
       pytestAvailable = true;
-    } catch (e) {}
+    } catch (e) { }
 
     if (pytestAvailable) {
       try {
@@ -785,17 +784,117 @@ function setBusy(val) {
   busy = val;
 }
 
-function handleGitDirtyWorkspace() {
+function showConfirmation(message) {
+  return new Promise((resolve) => {
+    const blessed = require("blessed");
+    const screen = tui.scr; // reuse the global blessed screen
+
+    // Create a modal overlay
+    const overlay = blessed.box({
+      parent: screen,
+      top: "center",
+      left: "center",
+      width: "50%",
+      height: 7,
+      border: { type: "line" },
+      style: {
+        border: { fg: "#ffa500" },
+        bg: "default",
+      },
+      keys: true,
+      vi: true,
+    });
+
+    const question = blessed.text({
+      parent: overlay,
+      top: 1,
+      left: 2,
+      right: 2,
+      content: message,
+      style: { fg: "#ffffff" },
+    });
+
+    const yesBtn = blessed.button({
+      parent: overlay,
+      bottom: 1,
+      left: "center",
+      width: 10,
+      height: 1,
+      content: " Yes ",
+      style: {
+        bg: "#2a2a2a",
+        fg: "#00ff00",
+        focus: { bg: "#00ff00", fg: "#000000" },
+      },
+      mouse: true,
+      keys: true,
+      shrink: true,
+      padding: { left: 1, right: 1 },
+    });
+
+    const noBtn = blessed.button({
+      parent: overlay,
+      bottom: 1,
+      left: "center+12",
+      width: 10,
+      height: 1,
+      content: " No ",
+      style: {
+        bg: "#2a2a2a",
+        fg: "#ff0000",
+        focus: { bg: "#ff0000", fg: "#000000" },
+      },
+      mouse: true,
+      keys: true,
+      shrink: true,
+      padding: { left: 1, right: 1 },
+    });
+
+    // Focus on Yes by default
+    yesBtn.focus();
+
+    const cleanup = (result) => {
+      overlay.destroy();
+      screen.render();
+      resolve(result);
+    };
+
+    yesBtn.on("press", () => cleanup(true));
+    noBtn.on("press", () => cleanup(false));
+
+    // Also allow Enter on focused button
+    yesBtn.key(["enter"], () => cleanup(true));
+    noBtn.key(["enter"], () => cleanup(false));
+
+    // Escape cancels (default = no)
+    overlay.key(["escape"], () => cleanup(false));
+
+    screen.render();
+  });
+}
+
+async function handleGitDirtyWorkspace() {
   const { execSync } = require('child_process');
   try {
     const status = execSync('git status --porcelain', { stdio: 'pipe' }).toString().trim();
     if (status) {
+      // Ask for confirmation
+      const confirmed = await showConfirmation('Uncommitted changes detected. Continue?'); if (!confirmed) {
+        const logItems = tui.getLogItems();
+        logItems.push({
+          type: "error",
+          text: "Aborted due to uncommitted changes."
+        });
+        tui.renderLog();
+        throw new Error('User aborted due to uncommitted changes');
+      }
+
       const currentBranch = execSync('git rev-parse --abbrev-ref HEAD', { stdio: 'pipe' }).toString().trim();
       execSync('git add -A', { stdio: 'pipe' });
       execSync('git commit -m "[System Checkpoint] Auto-commit of uncommitted changes before deepseek-cli execution" --no-verify', { stdio: 'pipe' });
       const newBranch = `ds-agent-${Date.now().toString(36)}`;
       execSync(`git checkout -b ${newBranch}`, { stdio: 'pipe' });
-      
+
       const logItems = tui.getLogItems();
       logItems.push({
         type: "status",
@@ -804,7 +903,11 @@ function handleGitDirtyWorkspace() {
       tui.renderLog();
     }
   } catch (err) {
-    // If not a git repo or fails, do nothing
+    // If not a git repo or user aborted, propagate the abort error
+    if (err.message === 'User aborted due to uncommitted changes') {
+      throw err;
+    }
+    // Otherwise ignore (maybe not a git repo)
   }
 }
 
@@ -825,22 +928,21 @@ async function ask(prompt) {
     if (lastToolCalls.length > 10) lastToolCalls.shift();
     return false;
   }
-
-  tui.setAutoScroll(true);
-  const brain = brainRegistry.getActiveBrain();
-  
   const modifiedFiles = new Set();
   let hasEditedFiles = false;
   let hasVerified = false;
 
   let sid = getCurrentSessionId();
   if (!sid) {
-    handleGitDirtyWorkspace();
+    // Await the git dirty workspace handler (which may throw if user aborts)
+    await handleGitDirtyWorkspace();
     const ns = createSession(prompt.slice(0, 40));
     sid = ns.id;
     setCurrentSessionId(sid);
     tui.setTopBarTitle(prompt.slice(0, 60));
   }
+  tui.setAutoScroll(true);
+  const brain = brainRegistry.getActiveBrain();
 
   const logItems = tui.getLogItems();
 
@@ -884,10 +986,10 @@ async function ask(prompt) {
     else if (!isBrainDone && isMcpDone) text = "connecting to browser...";
 
     let askBootItem = { type: "status", text };
-    
+
     // Prevent double spinners
     dsItem.spinning = false;
-    
+
     const dsIdx = logItems.indexOf(dsItem);
     if (dsIdx !== -1) {
       logItems.splice(dsIdx, 0, askBootItem);
@@ -909,7 +1011,7 @@ async function ask(prompt) {
     if (askBootIdx !== -1) {
       logItems.splice(askBootIdx, 1);
     }
-    
+
     // Restore main spinner
     dsItem.spinning = true;
     tui.renderLog();
@@ -1021,8 +1123,8 @@ async function ask(prompt) {
                   `Do NOT call any tools. Do NOT rewrite any code. This is analysis only.`;
 
                 const deadCodeResult = await brain.getCompletionStream(deadCodePrompt, {
-                  onStartCalled: () => {},
-                  onProgress: () => {}
+                  onStartCalled: () => { },
+                  onProgress: () => { }
                 });
                 const dcText = (deadCodeResult.responseText || "").trim();
                 if (dcText && !dcText.toLowerCase().startsWith("no dead code")) {
@@ -1142,8 +1244,7 @@ async function ask(prompt) {
               setTimeout(
                 () =>
                   resolve(
-                    `[Tool Timeout] ${c.tool} did not complete within ${
-                      TOOL_TIMEOUT_MS / 1000
+                    `[Tool Timeout] ${c.tool} did not complete within ${TOOL_TIMEOUT_MS / 1000
                     }s`
                   ),
                 TOOL_TIMEOUT_MS
@@ -1197,9 +1298,8 @@ async function ask(prompt) {
           .join("\n\n");
         const overflow =
           calls.length > MAX_PAR
-            ? `\n\nNote: ${
-                calls.length - MAX_PAR
-              } call(s) truncated — issue them next turn if needed.`
+            ? `\n\nNote: ${calls.length - MAX_PAR
+            } call(s) truncated — issue them next turn if needed.`
             : "";
         const FORMAT_REMINDER = `\n\n[Reminder: You MUST respond in English only. You can either invoke another tool using JSON, or output plain text to respond to the user if you are done.\n` +
           `JSON Format (Single):\n{"tool": "tool_name", "param1": "val"}\n` +
@@ -1268,7 +1368,7 @@ async function ask(prompt) {
         } else if (toolName === "execute_shell_command") {
           hasVerified = true;
         }
-        
+
         tui.startGlobalSpinner();
         tui.renderLog();
 
@@ -1342,10 +1442,10 @@ async function ask(prompt) {
 function syncSession(sid, prompt) {
   const sess = getSessions().find((s) => s.id === sid);
   if (!sess) return;
-  
+
   const brain = brainRegistry.getActiveBrain();
   if (brain && typeof brain.onSessionSync === "function") {
-    brain.onSessionSync(sess, prompt).catch(() => {});
+    brain.onSessionSync(sess, prompt).catch(() => { });
   }
 
   if (sess.title === "New Chat") {
@@ -1374,7 +1474,7 @@ async function compactCurrentSession() {
   let summaryText = "";
   try {
     const result = await brain.getCompletionStream(compactPrompt, {
-      onStartCalled: () => {},
+      onStartCalled: () => { },
       onProgress: (progress) => {
         if (progress.text && progress.text.length > summaryText.length) {
           summaryText = progress.text;
