@@ -7,7 +7,7 @@ const mcpLoader = require("../mcp/mcp_loader");
 const tools = {};
 const files = fs.readdirSync(__dirname);
 for (const file of files) {
-  if (file === 'index.js' || !file.endsWith('.js')) continue;
+  if (file === 'index.ts' || (!file.endsWith('.js') && !file.endsWith('.ts'))) continue;
   const tool = require(path.join(__dirname, file));
   if (tool.name && typeof tool.execute === 'function') {
     tools[tool.name] = tool;
@@ -101,7 +101,7 @@ function getGitContext() {
     const cwd = process.cwd();
     const isGit = fs.existsSync(path.join(cwd, '.git'));
     if (!isGit) return '';
-    
+
     let ctx = '\n# GIT CONTEXT\n';
     try {
       const branch = execSync('git branch --show-current', { cwd, timeout: 3000 }).toString().trim();
@@ -131,18 +131,14 @@ function getSystemPrompt(userPrompt) {
     if (servers.length > 0) {
       mcpServersList = servers.join(', ');
     }
-  } catch (err) {}
-
-
-
-
+  } catch (err) { }
 
   let dynamicRulesContext = '';
   try {
     const cwd = process.cwd();
     const globalConfig = path.join(os.homedir(), '.deepseek_cli', 'workflows');
     const localConfig = path.join(cwd, 'ds_config', 'workflows');
-    
+
     const rules = [];
     let projectDependencies = "";
     if (fs.existsSync(path.join(cwd, 'package.json'))) projectDependencies += fs.readFileSync(path.join(cwd, 'package.json'), 'utf8');
@@ -155,7 +151,7 @@ function getSystemPrompt(userPrompt) {
       for (const file of wfFiles) {
         if (file.endsWith('.md')) {
           let content = fs.readFileSync(path.join(workflowsDir, file), 'utf8');
-          
+
           if (isGlobal) {
             const firstLine = content.split('\n')[0].trim();
             if (firstLine.startsWith('trigger:')) {
@@ -170,12 +166,12 @@ function getSystemPrompt(userPrompt) {
               content = lines.join('\n');
             }
           }
-          
+
           rules.push(`[Workflow: ${file}]:\n${content}`);
         }
       }
     };
-    
+
     checkAndLoad(globalConfig, true);
     checkAndLoad(localConfig, false);
 
@@ -185,18 +181,23 @@ function getSystemPrompt(userPrompt) {
   } catch { }
 
   const gitContext = getGitContext();
-  return `You are the Head Brain (Main Agent) — a hierarchical Software Architect and Coordinator. Your role is high-level planning, orchestrating, reviewing, and stitching.
+  return `You are the Head Brain (Main Agent) — a hierarchical Software Architect and Coordinator. Your role is high-level planning, orchestrating, reviewing, stitching, and DIRECTLY implementing code changes.
 
-# COORDINATION & DELEGATION RULE (CRITICAL)
-- You MUST NEVER write code features, implement functions/classes from scratch, or create logic yourself. This keeps your context clean and unburdened.
-- You MUST delegate all feature implementation, function writing, and unit-test creation to Sub-Agents using the "run_sub_agent" tool.
-- You CAN call file tools (like "patch_file", "patch_multiple_files", etc.) ONLY to:
-   1. Review the output code produced by Sub-Agents.
-   2. Stitch the code into target files.
-   3. Wire up imports, exports, and routes.
-   4. Patch small bugs, syntax fixes, or variable adjustments.
-   5. NEVER call write_file on existing files. write_file is strictly for new files.
+# COORDINATION & IMPLEMENTATION RULE (UPDATED)
+- You are PERMITTED to write code features, implement functions/classes, and create logic yourself when appropriate. You do not need to delegate everything.
+- You SHOULD delegate only when a task is large, complex, or benefits from parallel execution (using the "run_sub_agent" tool).
+- You CAN call file tools (like "patch_file", "patch_multiple_files", "write_file", etc.) for any purpose: creating new files, modifying existing files, reviewing code, stitching, wiring imports, fixing bugs, or adjusting variables.
+- When you directly implement code, follow all safety rules: read before edit, no placeholder comments, run verification after changes.
+- You may also create implementation plans and task files for yourself without needing a sub-agent.
 - Once a Sub-Agent finishes its micro-task, its tab is automatically destroyed. You review the changes, patch any integration issues, and then move to the next micro-task.
+
+
+# WORKFLOW-FIRST RULE (MANDATORY - HIGHEST PRIORITY)
+- BEFORE any sequential thinking, planning, or code changes, you MUST check if there are workflows relevant to the current task.
+- Use the \\\`find_workflow\\\` tool with a query describing the task (e.g., "typescript verification", "python testing").
+- If matching workflows are found, use \\\`get_workflow_content\\\` to load the full workflow instructions.
+- Follow the workflow's steps for verification, building, testing, or any other language-specific operations.
+- Do NOT proceed with code changes until you have loaded applicable workflows.
 
 # RESEARCH & CODEBASE UNDERSTANDING (MANDATORY FIRST STEP)
 - Before you begin sequential thinking, planning, or dispatching any sub-agents, you MUST locate and read the existing relevant code files (using \`read_file\`, \`glob_search\`, \`grep_search\`) to understand what is broken or where a new feature needs to be added.
@@ -281,14 +282,14 @@ function getSubAgentSystemPrompt(userPrompt, agentNumber = 1) {
     if (servers.length > 0) {
       mcpServersList = servers.join(', ');
     }
-  } catch (err) {}
+  } catch (err) { }
 
   let dynamicRulesContext = '';
   try {
     const cwd = process.cwd();
     const globalConfig = path.join(os.homedir(), '.deepseek_cli', 'workflows');
     const localConfig = path.join(cwd, 'ds_config', 'workflows');
-    
+
     const rules = [];
     let projectDependencies = "";
     if (fs.existsSync(path.join(cwd, 'package.json'))) projectDependencies += fs.readFileSync(path.join(cwd, 'package.json'), 'utf8');
@@ -301,7 +302,7 @@ function getSubAgentSystemPrompt(userPrompt, agentNumber = 1) {
       for (const file of wfFiles) {
         if (file.endsWith('.md')) {
           let content = fs.readFileSync(path.join(workflowsDir, file), 'utf8');
-          
+
           if (isGlobal) {
             const firstLine = content.split('\n')[0].trim();
             if (firstLine.startsWith('trigger:')) {
@@ -316,12 +317,12 @@ function getSubAgentSystemPrompt(userPrompt, agentNumber = 1) {
               content = lines.join('\n');
             }
           }
-          
+
           rules.push(`[Workflow: ${file}]:\n${content}`);
         }
       }
     };
-    
+
     checkAndLoad(globalConfig, true);
     checkAndLoad(localConfig, false);
 
