@@ -1,3 +1,4 @@
+// @ts-nocheck
 const { tools, getSystemPrompt, normalizeToolCall } = require("../tools");
 const mcpLoader = require("../mcp/mcp_loader");
 const tui = require("../tui/tui");

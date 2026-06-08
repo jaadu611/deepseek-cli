@@ -1,3 +1,4 @@
+// @ts-nocheck
 class BaseBrain {
   /**
    * Unique identifier for this brain

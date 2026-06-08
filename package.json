@@ -2,12 +2,15 @@
   "name": "deepseek-cli",
   "version": "1.0.0",
   "description": "",
-  "main": "main.js",
+  "main": "dist/main.js",
   "bin": {
-    "deepseek-cli": "./main.js",
-    "ds": "./main.js"
+    "deepseek-cli": "./dist/main.js",
+    "ds": "./dist/main.js"
   },
   "scripts": {
+    "build": "tsc",
+    "start": "node dist/main.js",
+    "dev": "node src/cli/cli.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
@@ -20,5 +23,11 @@
     "glob": "^13.0.6",
     "playwright": "^1.60.0",
     "playwright-stealth": "^0.0.1"
+  },
+  "devDependencies": {
+    "@types/blessed": "^0.1.27",
+    "@types/glob": "^8.1.0",
+    "@types/node": "^20.19.42",
+    "typescript": "^5.9.3"
   }
 }

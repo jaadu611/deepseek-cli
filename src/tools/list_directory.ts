@@ -1,3 +1,4 @@
+// @ts-nocheck
 const fs = require('fs');
 const path = require('path');
 const { isPathAllowed, getPermissionErrorPath } = require('../utils/permissions');

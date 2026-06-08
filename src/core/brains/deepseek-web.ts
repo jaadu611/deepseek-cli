@@ -1,3 +1,4 @@
+// @ts-nocheck
 const BaseBrain = require("./base");
 const { chromium } = require("playwright");
 const { execSync } = require("child_process");

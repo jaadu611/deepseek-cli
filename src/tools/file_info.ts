@@ -1,3 +1,4 @@
+// @ts-nocheck
 const fs = require('fs'); // test rollback
 const path = require('path');
 const { isPathAllowed, getPermissionErrorPath } = require('../utils/permissions');

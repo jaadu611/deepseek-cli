@@ -1,3 +1,4 @@
+// @ts-nocheck
 const { getRegistry } = require("../mcp/mcp_loader");
 
 const PAGE_SIZE = 10;

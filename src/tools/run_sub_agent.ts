@@ -1,3 +1,4 @@
+// @ts-nocheck
 const brainRegistry = require("../core/brains/registry");
 const tui = require("../tui/tui");
 const mcpLoader = require("../mcp/mcp_loader");

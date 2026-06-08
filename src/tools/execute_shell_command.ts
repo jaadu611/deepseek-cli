@@ -1,3 +1,4 @@
+// @ts-nocheck
 const { exec } = require('child_process');
 const { isCommandAllowed, getPermissionErrorCommand } = require('../utils/permissions');
 

@@ -1,3 +1,4 @@
+// @ts-nocheck
 const DeepSeekWebBrain = require("./deepseek-web");
 
 class BrainRegistry {

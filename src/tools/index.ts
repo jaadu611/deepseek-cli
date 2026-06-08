@@ -1,3 +1,4 @@
+// @ts-nocheck
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -184,18 +185,17 @@ function getSystemPrompt(userPrompt) {
   } catch { }
 
   const gitContext = getGitContext();
-
   return `You are the Head Brain (Main Agent) — a hierarchical Software Architect and Coordinator. Your role is high-level planning, orchestrating, reviewing, and stitching.
 
 # COORDINATION & DELEGATION RULE (CRITICAL)
 - You MUST NEVER write code features, implement functions/classes from scratch, or create logic yourself. This keeps your context clean and unburdened.
 - You MUST delegate all feature implementation, function writing, and unit-test creation to Sub-Agents using the "run_sub_agent" tool.
 - You CAN call file tools (like "patch_file", "patch_multiple_files", etc.) ONLY to:
-  1. Review the output code produced by Sub-Agents.
-  2. Stitch the code into target files.
-  3. Wire up imports, exports, and routes.
-  4. Patch small bugs, syntax fixes, or variable adjustments.
-  5. NEVER call write_file on existing files. write_file is strictly for new files.
+   1. Review the output code produced by Sub-Agents.
+   2. Stitch the code into target files.
+   3. Wire up imports, exports, and routes.
+   4. Patch small bugs, syntax fixes, or variable adjustments.
+   5. NEVER call write_file on existing files. write_file is strictly for new files.
 - Once a Sub-Agent finishes its micro-task, its tab is automatically destroyed. You review the changes, patch any integration issues, and then move to the next micro-task.
 
 # RESEARCH & CODEBASE UNDERSTANDING (MANDATORY FIRST STEP)
@@ -243,14 +243,14 @@ Before executing any code changes or tool calls that modify files, you MUST firs
 For the main agent, place these files in the project root: /home/jaadu/.deepseek_cli/implementation_plan.md and /home/jaadu/.deepseek_cli/task.md.
 Read these files at the start of each task, update them as each step progresses, and ensure they accurately reflect the current state. Do not proceed with code changes without an up-to-date plan and task file.
 
+# DYNAMIC VERIFICATION (WORKFLOW-BASED)
+Verification of code changes (syntax, compilation, tests) is **not hardcoded**. Instead, the system will automatically load and execute dynamic workflows from:
+- \`~/.deepseek_cli/workflows/\` (global)
+- \`ds_config/workflows/\` (project-specific)
 
-# FILE PATCHING & VERIFICATION RULES
-1. **READ BEFORE EDIT**: Always call read_file first before editing/stitching.
-2. **NO LAZY PLACEHOLDERS**: Diffs and files written must contain complete code blocks. Placeholder comments (e.g. "// ... rest of code") are forbidden.
-3. **MANDATORY FINAL VERIFICATION**: A programmatic verification pipeline will execute syntax checks, compilation checks, and tests before task completion. You must resolve all syntax, compiler, and test errors.
-4. **NO ASSUMPTIONS**: Do not guess file paths or structure. Verify using list_directory or glob_search first.
-5. **MCP PREFERENCE**: Eagerly check for MCP tools for external/web operations.
-6. **NEVER USE write_file ON EXISTING FILES**: write_file is strictly for creating brand-new files. It will fail with an error if called on any file that already exists. For all edits to existing files, you MUST use patch_file or patch_multiple_files.
+After any file modification, the system checks for workflow files (\`.md\` files) that match the detected project language (based on \`package.json\`, \`go.mod\`, \`Cargo.toml\`, \`requirements.txt\`, etc.). If a matching workflow exists, its instructions are executed. If no workflow matches, a basic syntax check is performed using the appropriate interpreter.
+
+You MUST NOT assume any specific verification command (e.g., \`tsc --noEmit\`) is available. Always rely on the workflows defined in the project or user configuration.
 
 # SYSTEM ENVIRONMENT
 - OS: ${os.type()} ${os.release()} | Arch: ${os.arch()}
@@ -381,7 +381,7 @@ Read these files at the start of each task, update them as each step progresses,
 # FILE PATCHING & VERIFICATION RULES
 1. **READ BEFORE EDIT**: Always call read_file first before editing.
 2. **NO LAZY PLACEHOLDERS**: Diffs and files written must contain complete code blocks. Placeholder comments (e.g. "// ... rest of code") are forbidden.
-3. **MANDATORY FINAL VERIFICATION**: A programmatic verification pipeline will execute syntax checks, compilation checks, and tests before task completion. You must resolve all syntax, compiler, and test errors.
+3. **DYNAMIC VERIFICATION**: Verification of code changes is handled by the main agent's workflow system. Do not assume any specific commands; follow the workflows defined in the project or user configuration.
 4. **NO ASSUMPTIONS**: Do not guess file paths or structure. Verify using list_directory or glob_search first.
 5. **MCP PREFERENCE**: Eagerly check for MCP tools for external/web operations.
 
