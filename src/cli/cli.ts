@@ -123,6 +123,41 @@ tui.input.on("submit", async (val) => {
   }
 
 
+  // ── /plan | /act | /auto ─ Mode switcher ──────────────────────────────────────
+  // The model prompt itself changes when the mode changes. /plan locks
+  // down file mutation (write_file only for ./implementation_plan.md);
+  // /act unlocks all tools; /auto auto-detects per turn.
+  if (val === "/plan" || val.startsWith("/plan ")) {
+    const tools = require("../tools");
+    tools.setMode("plan");
+    if (tui.setModeBadge) tui.setModeBadge("plan");
+    const logItems = tui.getLogItems();
+    logItems.push({ type: "status", text: "🟦 MODE: plan (active). Read-only. write_file allowed only for ./implementation_plan.md. The NEXT turn will see the new system prompt. Type /act to switch back." });
+    tui.renderLog();
+    tui.refocusInput();
+    return;
+  }
+  if (val === "/act" || val.startsWith("/act ")) {
+    const tools = require("../tools");
+    tools.setMode("act");
+    if (tui.setModeBadge) tui.setModeBadge("act");
+    const logItems = tui.getLogItems();
+    logItems.push({ type: "status", text: "🟩 MODE: act (active). Full tool access. The NEXT turn will see the new system prompt. Type /plan to switch back." });
+    tui.renderLog();
+    tui.refocusInput();
+    return;
+  }
+  if (val === "/auto" || val.startsWith("/auto ")) {
+    const tools = require("../tools");
+    tools.setMode("auto");
+    if (tui.setModeBadge) tui.setModeBadge("auto");
+    const logItems = tui.getLogItems();
+    logItems.push({ type: "status", text: "⬜ MODE: auto (active). Mode will be detected per turn from your wording. Type /act or /plan to lock a mode." });
+    tui.renderLog();
+    tui.refocusInput();
+    return;
+  }
+
   // ── /install-workflow <url> ───────────────────────────────────────────────
   if (val.startsWith("/install-workflow ")) {
     const url = val.replace("/install-workflow ", "").trim();
@@ -303,13 +338,18 @@ tui.input.on("submit", async (val) => {
 
 - **/new** — Start a new chat session
 - **/chat** — Browse chat history
+- **/plan** — Switch to PLAN mode (read-only, model produces a plan)
+- **/act** — Switch to ACT mode (full tool access)
+- **/auto** — Switch to AUTO mode (auto-detect per turn)
 - **/install-workflow <url>** — Download a workflow .md from a raw GitHub URL
 - **/install-mcp <name> <package>** — Add an MCP server to mcp.json
 - **/list-workflows** — List all installed workflows and their triggers
 - **/list-mcp** — List all configured MCP servers
 - **/checkpoints** — List all local checkpoints
 - **/revert <checkpoint_id>** — Revert codebase to a previous checkpoint
-- **/help** — Show this help message`,
+- **/help** — Show this help message
+
+Tip: In AUTO mode, typing "plan it first" switches to PLAN automatically, and "go ahead" / "start executing" switches to ACT.`,
       spinning: false,
     });
     tui.renderLog();
@@ -324,6 +364,15 @@ tui.input.on("submit", async (val) => {
     logItems.push({ type: "status", text: `[Checkpoint ${cp.id} created]` });
     tui.renderLog();
   }
+
+  // Auto-detect a mode switch from the user wording (only in 'auto' mode).
+  try {
+    const tools = require("../tools");
+    if (tools.getMode && tools.getMode() === "auto") {
+      const detected = tools.detectAutoSwitch ? tools.detectAutoSwitch(val) : null;
+      if (detected) tools.setMode(detected);
+    }
+  } catch (_) { /* non-fatal */ }
 
   orchestrator.ask(val).catch(() => {});
 });
@@ -419,6 +468,7 @@ function main() {
   tui.setLogItems(logItems);
   tui.input.focus();
   tui.setTopBarTitle("deepseek");
+  if (tui.setModeBadge) tui.setModeBadge("act");
   tui.startGlobalSpinner();
   tui.renderLog();
 

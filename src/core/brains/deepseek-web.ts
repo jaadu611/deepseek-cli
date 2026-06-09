@@ -703,7 +703,7 @@ class DeepSeekWebBrain extends BaseBrain {
   async getCurrentDeepseekId() {
     const page = await this.getPage();
     const url = page.url();
-    const match = url.match(/\/s\/([a-zA-Z0-9]+)/);
+    const match = url.match(/\/s\/([a-zA-Z0-9-]+)/);
     require('fs').appendFileSync(
       "/tmp/deepseek-cli-debug.log",
       `[Brain] getCurrentDeepseekId: URL=${url}, found=${match ? match[1] : 'null'}\n`

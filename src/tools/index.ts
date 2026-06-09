@@ -3,6 +3,13 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const mcpLoader = require("../mcp/mcp_loader");
+const modePrompts = require("../utils/mode_prompts");
+
+// Current mode state. Set by the CLI /plan, /act, /auto slash commands,
+// or by detectAutoSwitch on the user prompt.
+let _currentMode = 'act';
+function setMode(m) { modePrompts.setMode(m); _currentMode = m; }
+function getMode() { return _currentMode; }
 
 const tools = {};
 const files = fs.readdirSync(__dirname);
@@ -122,6 +129,12 @@ function getGitContext() {
 }
 
 function getSystemPrompt(userPrompt) {
+  // Use the mode-specific prompt. The base scaffolding (tool list, git context,
+  // dynamic workflows) is built separately and prepended in the caller.
+  return modePrompts.getSystemPromptForMode(_currentMode, userPrompt);
+}
+
+function buildBaseScaffolding(userPrompt) {
   const toolDescriptions = Object.values(tools).map(getCompactToolDesc).join('\n');
 
   let mcpServersList = 'None';
@@ -191,6 +204,65 @@ function getSystemPrompt(userPrompt) {
 - You may also create implementation plans and task files for yourself without needing a sub-agent.
 - Once a Sub-Agent finishes its micro-task, its tab is automatically destroyed. You review the changes, patch any integration issues, and then move to the next micro-task.
 
+
+
+# WRITE-AND-RUN-OWN-TESTS RULE (MANDATORY)
+When you change code (any file under src/, lib/, app/, services/, or anywhere in the project that contains real logic — NOT docs, comments, or pure markdown), you MUST:
+1. Use write_file to create a temporary test file in the project test convention:
+   - Node/TypeScript: ./test_<feature>.js (or .ts if project uses TS natively) in the project root
+   - Python: ./test_<feature>.py (pytest style) or ./tests/test_<feature>.py
+   - Go: ./<package>_test.go (Go convention)
+   - Rust: ./tests/<name>_test.rs or #[cfg(test)] in same file
+   - Java/Kotlin: src/test/java/.../Test<Name>.java
+   - Shell: ./test_<feature>.sh with set -e at the top
+2. The test file MUST cover:
+   a. The HAPPY PATH (the change works as intended)
+   b. The FAILURE PATH (the change returns the right error on bad input)
+   c. At least one REGRESSION CHECK (the change does not break something adjacent)
+3. Use execute_command to run the test with the project actual test runner. Examples:
+   - Node:    node ./test_<feature>.js
+   - Python:  python -m pytest ./test_<feature>.py -v
+   - Go:      go test ./... -run <Name>
+   - Rust:    cargo test <name>
+   - Java:    mvn test -Dtest=<Name>
+   - Shell:   bash ./test_<feature>.sh
+4. If the test FAILS, you MUST:
+   - Read the actual error output (do not assume)
+   - Re-read the file you changed (your mental model may be stale — NEVER RESET RULE)
+   - Patch only what is wrong (NEVER use write_file to rewrite the whole file)
+   - Re-run the test
+5. You MAY NOT claim done until the test passes AND you have:
+   - Removed the temporary test file (or moved it to the project permanent test/ dir)
+   - Re-run the project full test suite to verify no adjacent code broke
+6. If you cannot run the test (no test runner installed, sandbox, etc.):
+   - Document that explicitly in your final answer
+   - Explain WHY you cannot run it
+   - Provide a manual verification step the user can do
+
+This rule applies whether you change 1 line or 100. The threshold is: did you
+touch source code that has logic? If yes, you owe a test. For pure comment /
+docs / config edits, no test is required.
+
+# CHECK, REVIEW, AND TEST BEFORE FINAL ANSWER (MANDATORY)
+Before you write your final answer to the user, you MUST run this 4-step self-audit on the changes you just made:
+1. DIFF REVIEW: Use get_file_diff (or git diff) on every file you changed. Read the diff line-by-line. Ask yourself:
+   - Is every change intentional?
+   - Did I delete something I did not mean to? (check for missing functions, methods, closing braces)
+   - Did I introduce a regression in adjacent code? (look at lines +/-5 around each hunk)
+   - Does the diff match the user original request, no more no less?
+   If any answer is "no" or "unsure", re-read the file and patch the issue immediately.
+2. DEPENDENCY CHECK: If you added an import or require(), verify the module exists and is spelled correctly. Run a quick grep_search for the symbol name across the project. If it does not exist, you have a hallucinated import — fix it now.
+3. TEST RE-RUN: Run the project full test suite (or the temporary test_<feature> file you wrote). The diff review passed; now make sure the tests still pass.
+4. FINAL SANITY: Read the user original request one more time. Is the change complete? Are there edge cases the user implied? (e.g. "make it work for empty input" — did you handle the empty input case?) If not, do one more iteration.
+
+ONLY AFTER all 4 steps pass may you write your final answer to the user. The final answer MUST include a one-line summary like:
+   PASS  Self-test: node ./test_<feature>.js -> 7/7 assertions green
+or
+   PASS  Self-test skipped: no test runner available in this environment (reason: <why>)
+or
+   FAIL  Self-test: <output>  (in which case you are NOT done — go fix it)
+
+If your final answer does NOT include a self-test result line, the orchestrator will REJECT the answer and ask you to re-run the test.
 
 # WORKFLOW-FIRST RULE (MANDATORY - HIGHEST PRIORITY)
 - BEFORE any sequential thinking, planning, or code changes, you MUST check if there are workflows relevant to the current task.
@@ -379,6 +451,66 @@ Read these files at the start of each task, update them as each step progresses,
 - Wait for the system to execute the tool and return the output. Do NOT simulate tool outputs, write mock JSON responses, or pretend that a tool has run.
 - Do NOT output the final answer or tool results in your text response until you have actually called the tool and received the real response from the system.
 
+
+# WRITE-AND-RUN-OWN-TESTS RULE (MANDATORY)
+When you change code (any file under src/, lib/, app/, services/, or anywhere in the project that contains real logic — NOT docs, comments, or pure markdown), you MUST:
+1. Use write_file to create a temporary test file in the project test convention:
+   - Node/TypeScript: ./test_<feature>.js (or .ts if project uses TS natively) in the project root
+   - Python: ./test_<feature>.py (pytest style) or ./tests/test_<feature>.py
+   - Go: ./<package>_test.go (Go convention)
+   - Rust: ./tests/<name>_test.rs or #[cfg(test)] in same file
+   - Java/Kotlin: src/test/java/.../Test<Name>.java
+   - Shell: ./test_<feature>.sh with set -e at the top
+2. The test file MUST cover:
+   a. The HAPPY PATH (the change works as intended)
+   b. The FAILURE PATH (the change returns the right error on bad input)
+   c. At least one REGRESSION CHECK (the change does not break something adjacent)
+3. Use execute_command to run the test with the project actual test runner. Examples:
+   - Node:    node ./test_<feature>.js
+   - Python:  python -m pytest ./test_<feature>.py -v
+   - Go:      go test ./... -run <Name>
+   - Rust:    cargo test <name>
+   - Java:    mvn test -Dtest=<Name>
+   - Shell:   bash ./test_<feature>.sh
+4. If the test FAILS, you MUST:
+   - Read the actual error output (do not assume)
+   - Re-read the file you changed (your mental model may be stale — NEVER RESET RULE)
+   - Patch only what is wrong (NEVER use write_file to rewrite the whole file)
+   - Re-run the test
+5. You MAY NOT claim done until the test passes AND you have:
+   - Removed the temporary test file (or moved it to the project permanent test/ dir)
+   - Re-run the project full test suite to verify no adjacent code broke
+6. If you cannot run the test (no test runner installed, sandbox, etc.):
+   - Document that explicitly in your final answer
+   - Explain WHY you cannot run it
+   - Provide a manual verification step the user can do
+
+This rule applies whether you change 1 line or 100. The threshold is: did you
+touch source code that has logic? If yes, you owe a test. For pure comment /
+docs / config edits, no test is required.
+
+# CHECK, REVIEW, AND TEST BEFORE FINAL ANSWER (MANDATORY)
+Before you write your final answer to the user, you MUST run this 4-step self-audit on the changes you just made:
+1. DIFF REVIEW: Use get_file_diff (or git diff) on every file you changed. Read the diff line-by-line. Ask yourself:
+   - Is every change intentional?
+   - Did I delete something I did not mean to? (check for missing functions, methods, closing braces)
+   - Did I introduce a regression in adjacent code? (look at lines +/-5 around each hunk)
+   - Does the diff match the user original request, no more no less?
+   If any answer is "no" or "unsure", re-read the file and patch the issue immediately.
+2. DEPENDENCY CHECK: If you added an import or require(), verify the module exists and is spelled correctly. Run a quick grep_search for the symbol name across the project. If it does not exist, you have a hallucinated import — fix it now.
+3. TEST RE-RUN: Run the project full test suite (or the temporary test_<feature> file you wrote). The diff review passed; now make sure the tests still pass.
+4. FINAL SANITY: Read the user original request one more time. Is the change complete? Are there edge cases the user implied? (e.g. "make it work for empty input" — did you handle the empty input case?) If not, do one more iteration.
+
+ONLY AFTER all 4 steps pass may you write your final answer to the user. The final answer MUST include a one-line summary like:
+   PASS  Self-test: node ./test_<feature>.js -> 7/7 assertions green
+or
+   PASS  Self-test skipped: no test runner available in this environment (reason: <why>)
+or
+   FAIL  Self-test: <output>  (in which case you are NOT done — go fix it)
+
+If your final answer does NOT include a self-test result line, the orchestrator will REJECT the answer and ask you to re-run the test.
+
+
 # FILE PATCHING & VERIFICATION RULES
 1. **READ BEFORE EDIT**: Always call read_file first before editing.
 2. **NO LAZY PLACEHOLDERS**: Diffs and files written must contain complete code blocks. Placeholder comments (e.g. "// ... rest of code") are forbidden.
@@ -456,4 +588,11 @@ module.exports = {
   getSystemPrompt,
   getSubAgentSystemPrompt,
   normalizeToolCall,
+  setMode,
+  getMode,
+  canCallToolInPlanMode: modePrompts.canCallToolInPlanMode,
+  isShellCommandReadOnly: modePrompts.isShellCommandReadOnly,
+  detectAutoSwitch: modePrompts.detectAutoSwitch,
+  getPlanModePrompt: modePrompts.getPlanModePrompt,
+  getActModePrompt: modePrompts.getActModePrompt,
 };

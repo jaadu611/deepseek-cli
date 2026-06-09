@@ -209,14 +209,14 @@ module.exports = {
       },
       name: {
         type: "string",
-        description: "The name of the specific LLM model/agent type to run (e.g. 'deepseek', 'qwen', 'gemini'). Defaults to 'deepseek'."
+        description: "The name of the specific LLM model/agent type to run (e.g. 'deepseek', 'qwen', 'gemini'). This is now mandatory."
       },
       prompt: {
         type: "string",
         description: "The micro-step instruction task description for the sub-agent. High-level rules are auto-injected."
       }
     },
-    required: ["agentNumber", "prompt"]
+    required: ["agentNumber", "name", "prompt"]
   },
   async execute({ agentNumber, name = "deepseek", prompt }) {
     const brain = brainRegistry.getActiveBrain();

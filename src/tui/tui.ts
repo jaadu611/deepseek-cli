@@ -362,12 +362,25 @@ function setAutoScroll(enabled) {
   }
 }
 
+let _modeBadge = '';
+const MODE_BADGES = {
+  plan: C.cyan + ' [PLAN] ' + R,
+  act: C.green + ' [ACT] ' + R,
+  auto: C.dim + ' [AUTO] ' + R,
+};
+
 function setTopBarTitle(title) {
   const cwd = process.cwd();
   const truncated = title && title.length > 50 ? title.slice(0, 47) + "…" : title || "deepseek";
-  topBar.setContent(C.dimmer + "  " + truncated + R + C.dim + " (" + cwd + ")" + R);
+  topBar.setContent(C.dimmer + "  " + truncated + R + _modeBadge + C.dim + " (" + cwd + ")" + R);
   scr.render();
 }
+
+function setModeBadge(mode) {
+  _modeBadge = MODE_BADGES[mode] || '';
+  scr.render();
+}
+function getModeBadge() { return _modeBadge; }
 
 function scrollDown(n) {
   chat.scroll(n || chat.height);
@@ -625,6 +638,8 @@ module.exports = {
   input,
   inputSep,
   setTopBarTitle,
+  setModeBadge,
+  getModeBadge,
   scrollDown,
   scrollUp,
   scrollChatToBottom,

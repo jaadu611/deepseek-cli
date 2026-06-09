@@ -5,10 +5,11 @@ node_modules/
 implementation_plan.md
 task.md
 
-# Deepseek CLI local data (scratch, backups, sessions)
+# Deepseek CLI local data (scratch, backups, sessions, tests)
 ds_config/
 scratch/
 .playwright-mcp/
+test/
 
 # Backup and log files
 *.bak

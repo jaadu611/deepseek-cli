@@ -4,6 +4,8 @@ const mcpLoader = require("../mcp/mcp_loader");
 const tui = require("../tui/tui");
 const brainRegistry = require("./brains/registry");
 const { loadConfig } = require("../utils/config");
+const harnessGuards = require("../utils/harness_guards");
+const modePrompts = require("../utils/mode_prompts");
 const path = require("path");
 const fs = require("fs");
 const {
@@ -257,9 +259,11 @@ function verifyImportsAndExports(filePath) {
       const importedNames = match[1].split(",").map(n => n.trim().split(/\s+as\s+/)[0].trim());
       for (const name of importedNames) {
         if (name && !targetExports.has(name)) {
+          const available = Array.from(targetExports).slice(0, 20).join(', ');
+          const availableNote = available ? `\n${path.basename(resolved)} actually exports: ${available}${targetExports.size > 20 ? ' ...' : ''}` : `\n${path.basename(resolved)} has NO exports.`;
           return {
             success: false,
-            error: `Linker Check Failed: '${name}' is imported in '${path.basename(filePath)}' from '${importPath}', but '${path.basename(resolved)}' does not export it.`
+            error: `Linker Check Failed: '${name}' is imported in '${path.basename(filePath)}' from '${importPath}', but '${path.basename(resolved)}' does not export it.${availableNote}\n\nRECOMMENDED NEXT STEP: 1) Read ${resolved} to see what is actually exported, 2) Fix the import name to match an existing export (or add the missing export to ${path.basename(resolved)}), 3) Verify the patch by re-running the linker check.`
           };
         }
       }
@@ -278,9 +282,11 @@ function verifyImportsAndExports(filePath) {
       });
       for (const name of importedNames) {
         if (name && !name.includes("\n") && !targetExports.has(name)) {
+          const available = Array.from(targetExports).slice(0, 20).join(', ');
+          const availableNote = available ? `\n${path.basename(resolved)} actually exports: ${available}${targetExports.size > 20 ? ' ...' : ''}` : `\n${path.basename(resolved)} has NO exports.`;
           return {
             success: false,
-            error: `Linker Check Failed: '${name}' is required in '${path.basename(filePath)}' from '${importPath}', but '${path.basename(resolved)}' does not export it.`
+            error: `Linker Check Failed: '${name}' is required in '${path.basename(filePath)}' from '${importPath}', but '${path.basename(resolved)}' does not export it.${availableNote}\n\nRECOMMENDED NEXT STEP: 1) Read ${resolved} to see what is actually exported, 2) Fix the require name to match an existing export (or add the missing export to ${path.basename(resolved)}), 3) Verify the patch by re-running the linker check.`
           };
         }
       }
@@ -482,9 +488,19 @@ function verifyNoConflictMarkers(filePath) {
   if (!fs.existsSync(filePath)) return null;
   const content = fs.readFileSync(filePath, "utf8");
   if (/^[<>=]{7}(?:\s|$)/m.test(content)) {
+    // Find which lines have markers
+    const lines = content.split("\n");
+    const markerLines = [];
+    for (let i = 0; i < lines.length; i++) {
+      if (/^[<>=]{7}(?:\s|$)/.test(lines[i])) {
+        markerLines.push(i + 1); // 1-indexed
+        if (markerLines.length >= 5) break;
+      }
+    }
+    const lineList = markerLines.length > 0 ? ` Conflict markers found on line(s): ${markerLines.join(', ')}.` : '';
     return {
       success: false,
-      error: `Linker Check Failed: Git conflict markers (e.g. <<<<<<<, =======, >>>>>>>) were detected in '${path.basename(filePath)}'. Please resolve them.`
+      error: `Linker Check Failed: Git conflict markers (e.g. <<<<<<<, =======, >>>>>>>) were detected in '${path.basename(filePath)}'.${lineList}\n\nRECOMMENDED NEXT STEP: 1) Open ${path.basename(filePath)} in your editor and search for '<<<<<<<', '=======', '>>>>>>>' lines, 2) For each marker, decide whether to keep the HEAD or incoming change, then delete all three lines, 3) Re-run the linker check. Do NOT use patch_file on conflict markers — that is the wrong tool.`
     };
   }
   return null;
@@ -496,9 +512,19 @@ function verifyJsonSyntax(filePath) {
     try {
       JSON.parse(fs.readFileSync(filePath, "utf8"));
     } catch (err) {
+      // Try to find the line/column of the error
+      const m = err.message.match(/position (\d+)/);
+      let location = '';
+      if (m) {
+        const pos = parseInt(m[1]);
+        const before = fs.readFileSync(filePath, 'utf8').substring(0, pos);
+        const lineNum = before.split('\n').length;
+        const colNum = pos - before.lastIndexOf('\n');
+        location = `\nError at line ${lineNum}, column ${colNum}.`;
+      }
       return {
         success: false,
-        error: `Syntax Check Failed: '${path.basename(filePath)}' is not valid JSON:\n${err.message}`
+        error: `Syntax Check Failed: '${path.basename(filePath)}' is not valid JSON.${location}\n  Error: ${err.message}\n\nRECOMMENDED NEXT STEP: 1) Read the file with read_file and go to the line/column above, 2) Look for a missing comma, trailing comma, unquoted key, or unescaped quote, 3) Patch the broken line (do NOT rewrite the whole file with write_file).`
       };
     }
   }
@@ -534,9 +560,15 @@ function verifyFileShrinkage(filePath, latestResponseText) {
 
   if (oldLines > 100 && newLines < oldLines * 0.7 && (oldLines - newLines) > 40) {
     const shrinkPercent = Math.round(((oldLines - newLines) / oldLines) * 100);
+    // Try to identify WHAT was deleted (top-of-file removals are most suspect)
+    const oldHead = oldContent.split("\n").slice(0, 10).join("\n");
+    const newHead = newContent.split("\n").slice(0, 10).join("\n");
+    const firstLineDiff = (oldHead !== newHead)
+      ? `\nFirst 10 lines changed:\n  OLD: ${oldHead.replace(/\n/g, ' / ').substring(0, 200)}\n  NEW: ${newHead.replace(/\n/g, ' / ').substring(0, 200)}`
+      : '';
     return {
       success: false,
-      error: `Linker Check Failed: Heuristic check failed. The line count of '${path.basename(filePath)}' decreased by ${shrinkPercent}% (from ${oldLines} to ${newLines} lines). Large code deletion or file truncation detected. Overwriting or truncating code is forbidden. If this deletion is intentional, please perform it in smaller, verified steps.`
+      error: `Linker Check Failed: Heuristic check failed. The line count of '${path.basename(filePath)}' decreased by ${shrinkPercent}% (from ${oldLines} to ${newLines} lines; a loss of ${oldLines - newLines} lines). Large code deletion or file truncation detected.${firstLineDiff}\n\nRECOMMENDED NEXT STEP: 1) Run \`git diff ${path.basename(filePath)}\` (or use get_file_diff) to see EXACTLY what was deleted, 2) If the deletion was intentional, add a one-line note in your response explaining why (e.g. "deleted dead function foo from refactor"), 3) If the deletion was accidental, restore_file to revert, then re-patch. Do NOT silently delete 40+ lines without a stated reason.`
     };
   }
   return null;
@@ -638,10 +670,30 @@ async function runAutomaticVerification(modifiedFiles, latestResponseText) {
         execSync(`${tscPath} --noEmit "${file}"`, { stdio: "pipe" });
       }
     } catch (err) {
-      const output = err.stderr ? err.stderr.toString() : err.message;
+      const stderr = err.stderr ? err.stderr.toString() : '';
+      const stdout = err.stdout ? err.stdout.toString() : '';
+      const exitCode = (err.status !== undefined ? err.status : err.code) || '?';
+      const rawOutput = (stderr + stdout).trim() || err.message;
+      // Show first 40 lines, then summarize how many more were truncated
+      const lines = rawOutput.split('\n');
+      const head = lines.slice(0, 40).join('\n');
+      const tailCount = Math.max(0, lines.length - 40);
+      const tailNote = tailCount > 0 ? `\n... +${tailCount} more lines (re-run the command yourself to see them all)` : '';
+      // Try to extract the specific error locations (file:line:col)
+      const locMatches = rawOutput.match(/(?:^|\s)([^\s:]+\.[a-z]+):(\d+):(\d+)\s*[-–]\s*[^\n]*/g) || [];
+      const locations = locMatches.length > 0 ? '\nError locations: ' + locMatches.slice(0, 5).join(' | ') : '';
+      // Identify the command we tried
+      let cmdTried = '';
+      if (ext === '.js' || ext === '.cjs' || ext === '.mjs') cmdTried = 'node --check ' + file;
+      else if (ext === '.py') cmdTried = 'python3 -m py_compile ' + file;
+      else if (ext === '.go') cmdTried = 'go vet ' + file;
+      else if (ext === '.ts' || ext === '.tsx') cmdTried = 'tsc --noEmit ' + file;
       return {
         success: false,
-        error: `Syntax check failed for ${path.basename(file)}:\n${output}`
+        error: `Syntax check FAILED for ${path.basename(file)} (exit ${exitCode}).\n\n` +
+               `Command: ${cmdTried}\n` +
+               `Output (first 40 lines):\n${head}${tailNote}${locations}\n\n` +
+               `RECOMMENDED NEXT STEP: 1) Re-read the file (your mental model may be stale), 2) Look at the specific error locations above, 3) Patch only the broken lines (do NOT use write_file to rewrite the whole file), 4) Re-run this check manually to verify.`
       };
     }
   }
@@ -1079,45 +1131,10 @@ async function ask(prompt) {
             }
           }
 
-          // ── Dead Code & Unused Import Guard (post-verification, non-blocking) ──
-          // After verification passes, ask the main brain to self-analyse the modified files
-          // for dead code and unused imports. Results are shown in TUI only — no rollback.
-          if (hasVerified && modifiedFiles.size > 0) {
-            try {
-              const fileList = Array.from(modifiedFiles)
-                .filter(f => fs.existsSync(f))
-                .map(f => path.relative(process.cwd(), f))
-                .join(', ');
-              if (fileList) {
-                const deadCodePrompt =
-                  `[SYSTEM: Dead Code & Unused Import Scan]\n` +
-                  `The following files were just modified: ${fileList}\n` +
-                  `Read each file and identify:\n` +
-                  `  1. Any imported symbols (require/import) that are never used in the file body.\n` +
-                  `  2. Any declared functions, classes, or variables that are defined but never called or referenced within the project.\n` +
-                  `  3. Any exports that are defined but not imported anywhere in the project.\n` +
-                  `Respond ONLY with a concise markdown bullet list of findings (file:line — description).\n` +
-                  `If there are no findings, respond with exactly: "No dead code or unused imports detected."\n` +
-                  `Do NOT call any tools. Do NOT rewrite any code. This is analysis only.`;
+          // ── Dead Code & Unused Import Guard (disabled) ──
+          // The automatic dead code scan has been removed per user request.
+          // No further action.
 
-                const deadCodeResult = await brain.getCompletionStream(deadCodePrompt, {
-                  onStartCalled: () => { },
-                  onProgress: () => { }
-                });
-                const dcText = (deadCodeResult.responseText || "").trim();
-                if (dcText && !dcText.toLowerCase().startsWith("no dead code")) {
-                  const dcItem = {
-                    type: "status",
-                    text: `[Dead Code Scan]\n${dcText}`
-                  };
-                  logItems.push(dcItem);
-                  tui.renderLog();
-                }
-              }
-            } catch (_dcErr) {
-              // Non-critical: dead code scan failure must never block the session
-            }
-          }
         }
 
         let finalText;
@@ -1353,6 +1370,9 @@ async function ask(prompt) {
         let toolResult = "";
         if (checkToolLoop(toolName, toolParams)) {
           toolResult = `❌ Loop detected: Identical tool call was repeated 3 times consecutively. Aborting execution to prevent infinite looping.`;
+        } else if (modePrompts.canCallToolInPlanMode(toolName, toolParams).allowed === false) {
+          // PLAN MODE: block any tool that's not allowed in the current mode
+          toolResult = modePrompts.canCallToolInPlanMode(toolName, toolParams).reason + '\n\n(You MUST reply in valid JSON.)';
         } else {
           const localTool = tools[toolName];
           if (localTool) {
