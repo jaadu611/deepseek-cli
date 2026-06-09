@@ -129,9 +129,10 @@ function getGitContext() {
 }
 
 function getSystemPrompt(userPrompt) {
-  // Use the mode-specific prompt. The base scaffolding (tool list, git context,
-  // dynamic workflows) is built separately and prepended in the caller.
-  return modePrompts.getSystemPromptForMode(_currentMode, userPrompt);
+  // Combine base scaffolding (full tool list, git context, workflows) with mode-specific prompt.
+  const baseScaffolding = buildBaseScaffolding(userPrompt);
+  const modePrompt = modePrompts.getSystemPromptForMode(_currentMode, userPrompt);
+  return baseScaffolding + '\n\n' + modePrompt;
 }
 
 function buildBaseScaffolding(userPrompt) {
