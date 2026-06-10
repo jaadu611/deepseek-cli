@@ -1107,8 +1107,10 @@ async function ask(prompt, options = {}) {
             const interceptMsg = `[SYSTEM INTERCEPT - VERIFICATION FAILED]\n${verificationResult.error}\n\nYou modified code but verification failed. You MUST fix these errors before returning a final response.`;
             currentPrompt = interceptMsg;
             isInitial = false;
-            dsItem = { type: "deepseek", text: "", spinning: true };
-            logItems.push(dsItem);
+            // Reuse the existing dsItem instead of creating a new one
+            dsItem.spinning = true;
+            dsItem.text = "";  // Clear any partial text
+            dsItem.thinking = (dsItem.thinking || "") + `\n\n[VERIFICATION FAILED]\n${verificationResult.error}`;
             tui.renderLog();
             continue;
           } else {
