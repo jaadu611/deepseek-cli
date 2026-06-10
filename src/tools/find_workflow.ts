@@ -5,7 +5,7 @@ const os = require('os');
 
 module.exports = {
   name: "find_workflow",
-  description: "Searches for workflow files in global (~/.deepseek_cli/workflows/) and project-specific directories (./workflows, ./.workflows, ./.github/workflows, ./ds_config/workflows). Accepts a query string (minimum 3 characters) and returns matching workflows as JSON array.",
+  description: "Searches for workflow files in global (~/.ds_config/workflows/) and project-specific directories (./workflows, ./.workflows, ./.github/workflows, ./ds_config/workflows). Accepts a query string (minimum 3 characters) and returns matching workflows as JSON array.",
   parameters: {
     type: "object",
     properties: {
@@ -26,7 +26,7 @@ module.exports = {
 
     // Define directories to search
     const homeDir = os.homedir();
-    const globalWorkflowsDir = path.join(homeDir, '.deepseek_cli', 'workflows');
+    const globalWorkflowsDir = path.join(homeDir, '.ds_config', 'workflows');
     const projectRoot = process.cwd();
         // Scan multiple project-specific workflow directories (common patterns)
     const projectWorkflowDirs = [

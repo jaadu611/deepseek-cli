@@ -15,5 +15,6 @@ test/
 *.bak
 *.log
 
-# Dist folder
+# Dist and chrome profile folder
 dist/
+scraper-profile/

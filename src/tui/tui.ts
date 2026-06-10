@@ -1,6 +1,10 @@
 // @ts-nocheck
-const blessed = require("blessed");
 const fs = require("fs");
+const readline = require("readline");
+const EventEmitter = require("events");
+
+let webviewView = null;
+let pendingConfirmationCallback = null;
 
 // ── palette ───────────────────────────────────────────────────────────────────
 const R = "\x1b[0m";
@@ -124,7 +128,7 @@ function renderMd(raw) {
   let inCode = false;
   let codeLang = "";
   let codeLines = [];
-  const width = chat && chat.width ? chat.width : scr.width || 80;
+  const width = process.stdout.columns || 80;
   const limit = width - 8;
 
   const flushCode = () => {
@@ -208,198 +212,89 @@ function renderMd(raw) {
   return lines;
 }
 
-let scr, topBar, chat, input, inputSep;
-let autoScrollEnabled = true;
-
-if (process.env.TESTING) {
-  scr = {
-    render: () => {},
-    append: () => {},
-    key: () => {},
-    on: () => {},
-  };
-  topBar = {
-    setContent: () => {},
-  };
-  chat = {
-    on: () => {},
-    setContent: () => {},
-    setScrollPerc: () => {},
-    getScrollHeight: () => 0,
-    height: 0,
-    itop: 0,
-    ibot: 0,
-    getScroll: () => 0,
-  };
-  input = {
-    key: () => {},
-    on: () => {},
-    focus: () => {},
-    clearValue: () => {},
-    screen: null,
-    _reading: false,
-    readInput: () => {},
-  };
-  inputSep = {};
-} else {
-  scr = blessed.screen({
-    smartCSR: true,
-    fullUnicode: true,
-    title: "deepseek",
-    ignoreLocked: ["C-c"],
-  });
-
-  topBar = blessed.box({
-    top: 0,
-    left: 0,
-    right: 0,
-    height: 1,
-    tags: false,
-    style: { bg: "default", fg: "#5a5a5a" },
-    padding: { left: 2 },
-    content: " deepseek ",
-  });
-
-  chat = blessed.box({
-    top: 1,
-    left: 0,
-    right: 0,
-    bottom: 3,
-    scrollable: true,
-    alwaysScroll: true,
-    mouse: true,
-    keys: false,
-    tags: false,
-    wrap: false,
-    scrollbar: {
-      ch: "│",
-      style: { fg: "#2a2a2a" },
-      track: { bg: "default" },
-    },
-    padding: { left: 3, right: 3, top: 1 },
-    style: { bg: "default", fg: "#d2d2d2" },
-  });
-
-  chat.on("scroll", () => {
-    const scrollHeight = chat.getScrollHeight();
-    const height = chat.height - chat.itop - chat.ibot;
-    const currentScroll = chat.getScroll();
-
-    if (scrollHeight > height) {
-      if (currentScroll < scrollHeight - height - 2) {
-        autoScrollEnabled = false;
-      } else {
-        autoScrollEnabled = true;
-      }
-    } else {
-      autoScrollEnabled = true;
-    }
-  });
-
-  inputSep = blessed.line({
-    bottom: 3,
-    left: 0,
-    right: 0,
-    orientation: "horizontal",
-    style: { fg: "#2a2a2a" },
-  });
-
-  input = blessed.textbox({
-    bottom: 0,
-    left: 0,
-    right: 0,
-    height: 3,
-    inputOnFocus: true,
-    padding: { left: 2, right: 3 },
-    placeholder: " Type a message or command... ",
-    style: {
-      bg: "default",
-      fg: "#e4e4e7",
-      border: { fg: "#27272a" },
-      focus: { border: { fg: "#06b6d4" } },
-    },
-    border: { type: "line" },
-  });
-
-  input.key(["escape"], () => {
-    // Ignore escape to prevent default blessed cancellation/lockup behavior
-  });
-
-  // Safe left/right arrow movement within input field
-  input.key(["left"], () => {
-    if (input.focused && input._.cursorX > 0) {
-      input._.cursorX--;
-      scr.render();
-    }
-  });
-
-  input.key(["right"], () => {
-    if (input.focused && input._.cursorX < input._.value.length) {
-      input._.cursorX++;
-      scr.render();
-    }
-  });
-
-  input.on("cancel", () => {
-    refocusInput();
-  });
-
-  scr.append(topBar);
-  scr.append(chat);
-  scr.append(inputSep);
-  scr.append(input);
-}
-
-function scrollChatToBottom() {
-  if (chat && chat.setScrollPerc) chat.setScrollPerc(100);
-  if (scr && scr.render) scr.render();
-}
-
-function setAutoScroll(enabled) {
-  autoScrollEnabled = !!enabled;
-  if (autoScrollEnabled) {
-    scrollChatToBottom();
-  }
-}
-
-let _modeBadge = '';
-const MODE_BADGES = {
-  plan: C.cyan + ' [PLAN] ' + R,
-  act: C.green + ' [ACT] ' + R,
-  auto: C.dim + ' [AUTO] ' + R,
+// ── mocked blessed components ────────────────────────────────────────────────
+const scr = {
+  render: () => {},
+  key: (keys, cb) => {},
 };
 
-function setTopBarTitle(title) {
-  const cwd = process.cwd();
-  const truncated = title && title.length > 50 ? title.slice(0, 47) + "…" : title || "deepseek";
-  topBar.setContent(C.dimmer + "  " + truncated + R + _modeBadge + C.dim + " (" + cwd + ")" + R);
-  scr.render();
+const topBar = {
+  setContent: (content) => {},
+};
+
+const chat = {
+  on: (evt, cb) => {},
+  setContent: (content) => {},
+  setScrollPerc: (perc) => {},
+  getScrollHeight: () => 0,
+  getScroll: () => 0,
+  width: 80,
+  height: 24,
+  itop: 0,
+  ibot: 0,
+};
+
+const inputSep = {};
+
+const inputEmitter = new EventEmitter();
+const input = {
+  key: (keys, cb) => {},
+  on: (evt, cb) => {
+    inputEmitter.on(evt, cb);
+  },
+  clearValue: () => {},
+  focus: () => {
+    refocusInput();
+  },
+  screen: scr,
+  _reading: false,
+  readInput: (cb) => {},
+};
+
+let autoScrollEnabled = true;
+function scrollChatToBottom() {}
+function setAutoScroll(enabled) {
+  autoScrollEnabled = !!enabled;
 }
 
+let currentMode = "act";
 function setModeBadge(mode) {
-  _modeBadge = MODE_BADGES[mode] || '';
-  scr.render();
+  currentMode = mode;
+  if (rl) {
+    let promptText = "ds";
+    if (currentMode) {
+      promptText += ` (${currentMode})`;
+    }
+    rl.setPrompt(`\x1b[36m${promptText}\x1b[0m › `);
+  }
+  if (webviewView) {
+    webviewView.webview.postMessage({
+      command: "setMode",
+      mode: mode
+    });
+  }
 }
-function getModeBadge() { return _modeBadge; }
+function getModeBadge() {
+  return currentMode;
+}
 
-function scrollDown(n) {
-  chat.scroll(n || chat.height);
-  scr.render();
-}
-function scrollUp(n) {
-  chat.scroll(-(n || chat.height));
-  scr.render();
-}
+function scrollDown() {}
+function scrollUp() {}
 
 // ── spinner ───────────────────────────────────────────────────────────────────
 let spinFrame = 0;
 let activeSpinners = 0;
 let globalSpinInterval = null;
 let logItems = [];
-let lineToItem = [];
 
 function startGlobalSpinner() {
   activeSpinners++;
+  if (webviewView) {
+    webviewView.webview.postMessage({
+      command: "spinner",
+      active: true
+    });
+  }
   if (globalSpinInterval) return;
   globalSpinInterval = setInterval(() => {
     spinFrame++;
@@ -409,226 +304,282 @@ function startGlobalSpinner() {
 
 function stopGlobalSpinner() {
   activeSpinners = Math.max(0, activeSpinners - 1);
-  if (activeSpinners === 0 && globalSpinInterval) {
-    clearInterval(globalSpinInterval);
-    globalSpinInterval = null;
-  }
-}
-
-// ── render ────────────────────────────────────────────────────────────────────
-function renderLog() {
-  try {
-    const lines = [];
-    lineToItem = [];
-
-    for (let idx = 0; idx < logItems.length; idx++) {
-      const item = logItems[idx];
-      let itemLines = [];
-      try {
-        if (item.type === "user") {
-          const limit = Math.max(20, (chat.width || scr.width || 80) - 9);
-          const wrapped = wrapText(item.text, limit);
-          itemLines.push(C.you + "  ›  " + R + C.body + wrapped[0] + R);
-          for (let i = 1; i < wrapped.length; i++)
-            itemLines.push("     " + C.body + wrapped[i] + R);
-        } else if (item.type === "deepseek") {
-          if (!item.text && !item.thinking && item.spinning) {
-            itemLines.push(C.dimmer + "  " + FRAMES[spinFrame % FRAMES.length] + R);
-          } else {
-            const limit = Math.max(20, (chat.width || scr.width || 80) - 7);
-
-            if (item.thinking) {
-              if (item.expanded) {
-                const thLines = wrapText(item.thinking, limit - 4);
-                for (let i = 0; i < thLines.length; i++) {
-                  itemLines.push(C.think + "  ┆ " + R + C.think + thLines[i] + R);
-                }
-              } else {
-                const endT = item._thinkingEndTime || Date.now();
-                const elapsed = item._thinkingStartTime
-                  ? Math.round((endT - item._thinkingStartTime) / 1000)
-                  : 0;
-                const label = elapsed > 0 ? `thought ${elapsed}s` : "thought";
-                itemLines.push(C.dimmer + "  ┆ " + C.think + "\x1b[3m" + label + " ▸" + R);
-              }
-            }
-
-            if (item.text) {
-              const rendered = renderMd(item.text);
-              const hasThink = !!item.thinking;
-              for (let i = 0; i < rendered.length; i++) {
-                if (i === 0 && !hasThink) {
-                  itemLines.push(C.accentB + "  ● " + R + rendered[i]);
-                } else if (hasThink) {
-                  itemLines.push(C.think + "  ┆ " + R + rendered[i]);
-                } else {
-                  itemLines.push("    " + rendered[i]);
-                }
-              }
-            }
-          }
-        } else if (item.type === "tool") {
-          const displayParams = item.params ? " " + C.dim + formatToolParams(item.name, item.params) + R : "";
-
-          if (item.status === "executing") {
-            itemLines.push(
-              C.dimmer +
-                "  " +
-                FRAMES[spinFrame % FRAMES.length] +
-                " " +
-                C.tool +
-                item.name +
-                R +
-                displayParams +
-                C.dimmer +
-                " …" +
-                R
-            );
-          } else if (item.expanded) {
-            itemLines.push(C.tool + "  ⊟ " + R + C.muted + item.name + R + displayParams);
-            if (item.result) {
-              const rLines = item.result.toString().split("\n");
-              const maxShow = Math.min(50, rLines.length);
-              for (let i = 0; i < maxShow; i++)
-                itemLines.push(C.dimmer + "  │ " + R + C.dim + rLines[i] + R);
-              if (rLines.length > maxShow)
-                itemLines.push(
-                  C.dimmer + "  │ " + R + C.dimmer + `… +${rLines.length - maxShow} lines` + R
-                );
-            }
-          } else {
-            itemLines.push(C.tool + "  ⊞ " + R + C.dim + item.name + R + displayParams + C.dimmer + " ▸" + R);
-          }
-        } else if (item.type === "separator") {
-          itemLines.push("");
-        } else if (item.type === "divider") {
-          const w = Math.max(10, (chat.width || scr.width || 80) - 8);
-          itemLines.push("   " + C.sep + "─".repeat(w) + R);
-        } else if (item.type === "error") {
-          itemLines.push(C.err + "  ✕ " + R + C.muted + item.message + R);
-        } else if (item.type === "status") {
-          itemLines.push(C.dimmer + "  " + FRAMES[spinFrame % FRAMES.length] + " " + C.muted + item.text + R);
-        } else if (item.type === "compact") {
-          itemLines.push(C.compact + "  ⚙ " + R + C.muted + item.message + R);
-        }
-
-        for (const l of itemLines) {
-          lines.push(l);
-          lineToItem.push(item);
-        }
-      } catch (innerErr) {
-        const fs = require('fs');
-        fs.appendFileSync('/tmp/deepseek-cli-crash.log', `renderLog inner error for item ${idx}: ${innerErr.stack}\nItem: ${JSON.stringify(item)}\n`);
-        itemLines = [C.err + `  ✕ Error rendering item ${idx}` + R];
-        for (const l of itemLines) {
-          lines.push(l);
-          lineToItem.push(item);
-        }
-      }
-    }
-
-    chat.setContent(lines.join("\n") + "\n\n\n");
-    if (autoScrollEnabled) {
-      chat.setScrollPerc(100);
-    }
-    scr.render();
-  } catch (outerErr) {
-    const fs = require('fs');
-    fs.appendFileSync('/tmp/deepseek-cli-crash.log', `renderLog outer error: ${outerErr.stack}\n`);
-    chat.setContent(C.err + 'Fatal rendering error. Check /tmp/deepseek-cli-crash.log' + R);
-    scr.render();
-  }
-}
-
-chat.on("click", (data) => {
-  const y = data.y - (chat.atop + chat.itop) + chat.childBase;
-  if (y < 0 || y >= lineToItem.length) return;
-  const item = lineToItem[y];
-  if (item?.type === "tool" && item.status === "completed") {
-    item.expanded = !item.expanded;
-    const prevScroll = autoScrollEnabled;
-    autoScrollEnabled = false;
-    renderLog();
-    autoScrollEnabled = prevScroll;
-  } else if (item?.type === "deepseek" && item.thinking) {
-    item.expanded = !item.expanded;
-    const prevScroll = autoScrollEnabled;
-    autoScrollEnabled = false;
-    renderLog();
-    autoScrollEnabled = prevScroll;
-  }
-});
-
-// ── chat history overlay ──────────────────────────────────────────────────────
-function showChatHistory(sessions, onSelect) {
-  if (!sessions || !sessions.length) {
-    return;
-  }
-
-  const overlay = blessed.box({
-    top: "center",
-    left: "center",
-    width: "70%",
-    height: "70%",
-    border: { type: "line" },
-    style: { border: { fg: "#3a3a3a" }, bg: "default" },
-    label: " sessions  esc to close ",
-    keys: true,
-    vi: true,
-    alwaysScroll: true,
-    scrollable: true,
-  });
-
-  const list = blessed.list({
-    parent: overlay,
-    top: 1,
-    left: 1,
-    right: 1,
-    bottom: 1,
-    keys: true,
-    vi: true,
-    mouse: true,
-    style: {
-      selected: { fg: "#52c4c4", bg: "default", bold: true },
-      item: { fg: "#888888" },
-    },
-    items: sessions.map((s) => {
-      const date = new Date(s.updated_at).toLocaleDateString("en-GB", {
-        day: "2-digit",
-        month: "short",
+  if (activeSpinners === 0) {
+    if (webviewView) {
+      webviewView.webview.postMessage({
+        command: "spinner",
+        active: false
       });
-      return `  ${date}  ${s.title}`;
-    }),
+    }
+    if (globalSpinInterval) {
+      clearInterval(globalSpinInterval);
+      globalSpinInterval = null;
+    }
+  }
+}
+
+// ── readline interface ────────────────────────────────────────────────────────
+let rl = null;
+let isInterfaceInitialized = false;
+
+function initReadline() {
+  if (isInterfaceInitialized) return;
+  rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+    terminal: true,
   });
 
-  scr.append(overlay);
-  list.focus();
-  scr.render();
-
-  const close = () => {
-    overlay.destroy();
-    refocusInput();
-  };
-  list.on("select", (_, idx) => {
-    close();
-    onSelect(sessions[idx]);
+  rl.on("line", (line) => {
+    clearActiveLines();
+    inputEmitter.emit("submit", line);
   });
-  list.key(["escape"], close);
-  overlay.key(["escape"], close);
+
+  isInterfaceInitialized = true;
 }
 
 function refocusInput() {
-  setTimeout(() => {
-    if (input.screen) {
-      if (input.screen.focused !== input) {
-        input.focus();
-      }
-      if (!input._reading) {
-        input.readInput((err, value) => {});
-      }
-      scr.render();
+  if (webviewView) return; // Webview handles its own focus.
+  initReadline();
+  clearActiveLines();
+  
+  let promptText = "ds";
+  if (currentMode) {
+    promptText += ` (${currentMode})`;
+  }
+  
+  rl.setPrompt(`\x1b[36m${promptText}\x1b[0m › `);
+  rl.prompt();
+}
+
+// ── render ────────────────────────────────────────────────────────────────────
+let finalizedIndex = 0;
+let activeLinesCount = 0;
+
+function clearActiveLines() {
+  if (activeLinesCount > 0) {
+    for (let i = 0; i < activeLinesCount; i++) {
+      process.stdout.write("\x1b[A\x1b[2K");
     }
-  }, 50);
+    activeLinesCount = 0;
+  }
+}
+
+function isItemFinalized(item, idx, arr) {
+  if (!item) return false;
+  if (
+    item.type === "user" ||
+    item.type === "separator" ||
+    item.type === "divider" ||
+    item.type === "error" ||
+    item.type === "compact"
+  ) {
+    return true;
+  }
+  if (item.type === "tool" && item.status === "completed") {
+    return true;
+  }
+  if (item.type === "deepseek" && !item.spinning) {
+    return true;
+  }
+  if (item.type === "status") {
+    for (let j = idx + 1; j < arr.length; j++) {
+      if (isItemFinalized(arr[j], j, arr)) return true;
+    }
+  }
+  return false;
+}
+
+function renderItemLines(item, idx) {
+  const itemLines = [];
+  const width = process.stdout.columns || 80;
+
+  if (item.type === "user") {
+    const limit = Math.max(20, width - 9);
+    const wrapped = wrapText(item.text, limit);
+    itemLines.push(C.you + "  ›  " + R + C.body + wrapped[0] + R);
+    for (let i = 1; i < wrapped.length; i++) {
+      itemLines.push("     " + C.body + wrapped[i] + R);
+    }
+  } else if (item.type === "deepseek") {
+    if (!item.text && !item.thinking && item.spinning) {
+      itemLines.push(C.dimmer + "  " + FRAMES[spinFrame % FRAMES.length] + R);
+    } else {
+      const limit = Math.max(20, width - 7);
+
+      if (item.thinking) {
+        const isExpanded = item.expanded !== false;
+        if (isExpanded) {
+          const thLines = wrapText(item.thinking, limit - 4);
+          for (let i = 0; i < thLines.length; i++) {
+            itemLines.push(C.think + "  ┆ " + R + C.think + thLines[i] + R);
+          }
+        } else {
+          const endT = item._thinkingEndTime || Date.now();
+          const elapsed = item._thinkingStartTime
+            ? Math.round((endT - item._thinkingStartTime) / 1000)
+            : 0;
+          const label = elapsed > 0 ? `thought ${elapsed}s` : "thought";
+          itemLines.push(C.dimmer + "  ┆ " + C.think + "\x1b[3m" + label + " ▸" + R);
+        }
+      }
+
+      if (item.text) {
+        const rendered = renderMd(item.text);
+        const hasThink = !!item.thinking;
+        for (let i = 0; i < rendered.length; i++) {
+          if (i === 0 && !hasThink) {
+            itemLines.push(C.accentB + "  ● " + R + rendered[i]);
+          } else if (hasThink) {
+            itemLines.push(C.think + "  ┆ " + R + rendered[i]);
+          } else {
+            itemLines.push("    " + rendered[i]);
+          }
+        }
+      }
+    }
+  } else if (item.type === "tool") {
+    const displayParams = item.params ? " " + C.dim + formatToolParams(item.name, item.params) + R : "";
+
+    if (item.status === "executing") {
+      itemLines.push(
+        C.dimmer +
+          "  " +
+          FRAMES[spinFrame % FRAMES.length] +
+          " " +
+          C.tool +
+          item.name +
+          R +
+          displayParams +
+          C.dimmer +
+          " …" +
+          R
+      );
+    } else {
+      itemLines.push(C.tool + "  ✓ " + R + C.dim + item.name + R + displayParams);
+      if (item.result) {
+        const resStr = item.result.toString();
+        if (
+          resStr.startsWith("Error") ||
+          resStr.startsWith("❌") ||
+          resStr.startsWith("[Tool Failed]") ||
+          resStr.startsWith("[MCP Failed]")
+        ) {
+          const rLines = resStr.split("\n");
+          for (let i = 0; i < Math.min(10, rLines.length); i++) {
+            itemLines.push(C.err + "  │ " + R + C.dim + rLines[i] + R);
+          }
+        }
+      }
+    }
+  } else if (item.type === "separator") {
+    itemLines.push("");
+  } else if (item.type === "divider") {
+    const w = Math.max(10, width - 8);
+    itemLines.push("   " + C.sep + "─".repeat(w) + R);
+  } else if (item.type === "error") {
+    itemLines.push(C.err + "  ✕ " + R + C.muted + item.message + R);
+  } else if (item.type === "status") {
+    itemLines.push(C.dimmer + "  " + FRAMES[spinFrame % FRAMES.length] + " " + C.muted + item.text + R);
+  } else if (item.type === "compact") {
+    itemLines.push(C.compact + "  ⚙ " + R + C.muted + item.message + R);
+  }
+
+  return itemLines;
+}
+
+function renderLog() {
+  if (webviewView) {
+    webviewView.webview.postMessage({
+      command: "updateLog",
+      logItems: logItems,
+      currentMode: currentMode
+    });
+    return;
+  }
+  try {
+    clearActiveLines();
+
+    while (
+      finalizedIndex < logItems.length &&
+      isItemFinalized(logItems[finalizedIndex], finalizedIndex, logItems)
+    ) {
+      const lines = renderItemLines(logItems[finalizedIndex], finalizedIndex);
+      for (const line of lines) {
+        process.stdout.write(line + "\n");
+      }
+      finalizedIndex++;
+    }
+
+    const activeLines = [];
+    for (let idx = finalizedIndex; idx < logItems.length; idx++) {
+      const lines = renderItemLines(logItems[idx], idx);
+      activeLines.push(...lines);
+    }
+
+    if (activeLines.length > 0) {
+      for (const line of activeLines) {
+        process.stdout.write(line + "\n");
+      }
+      activeLinesCount = activeLines.length;
+    }
+  } catch (err) {
+    const fs = require("fs");
+    fs.appendFileSync(
+      "/tmp/deepseek-cli-crash.log",
+      `renderLog CLI error: ${err.stack}\n`
+    );
+  }
+}
+
+function setTopBarTitle(title) {
+  // Stored for CLI compatibility
+}
+
+// ── chat history overlay ──────────────────────────────────────────────────────
+function showChatHistory(sessions, onSelect) {
+  initReadline();
+  clearActiveLines();
+  process.stdout.write("\n\x1b[36m--- Saved Sessions ---\x1b[0m\n");
+  sessions.forEach((s, idx) => {
+    const date = new Date(s.updated_at).toLocaleDateString("en-GB", {
+      day: "2-digit",
+      month: "short",
+    });
+    process.stdout.write(`  ${idx + 1}) \x1b[90m${date}\x1b[0m  ${s.title}\n`);
+  });
+  process.stdout.write("\n");
+
+  rl.question("Select a session number (or press Enter to cancel): ", (answer) => {
+    const val = answer.trim();
+    if (val) {
+      const idx = parseInt(val, 10) - 1;
+      if (idx >= 0 && idx < sessions.length) {
+        onSelect(sessions[idx]);
+        return;
+      }
+      process.stdout.write("\x1b[31mInvalid session number.\x1b[0m\n");
+    }
+    refocusInput();
+  });
+}
+
+function askConfirmation(message, callback) {
+  if (webviewView) {
+    webviewView.webview.postMessage({
+      command: "askConfirmation",
+      message: message
+    });
+    pendingConfirmationCallback = callback;
+    return;
+  }
+  initReadline();
+  clearActiveLines();
+  rl.question(`⚠️  \x1b[33m${message}\x1b[0m (y/N): `, (answer) => {
+    const val = answer.trim().toLowerCase();
+    const confirmed = val === "y" || val === "yes";
+    callback(confirmed);
+  });
 }
 
 module.exports = {
@@ -648,10 +599,36 @@ module.exports = {
   stopGlobalSpinner,
   renderLog,
   showChatHistory,
+  askConfirmation,
   renderMd,
   wrapText,
   inline,
   refocusInput,
-  setLogItems(items) { logItems = items; },
-  getLogItems() { return logItems; },
+  C,
+  R,
+  setLogItems(items) {
+    logItems = items;
+    finalizedIndex = 0;
+    activeLinesCount = 0;
+    if (webviewView) {
+      webviewView.webview.postMessage({
+        command: "updateLog",
+        logItems: logItems,
+        currentMode: currentMode
+      });
+    }
+  },
+  getLogItems() {
+    return logItems;
+  },
+  setWebview(view) {
+    webviewView = view;
+  },
+  handleConfirmationResponse(confirmed) {
+    if (pendingConfirmationCallback) {
+      pendingConfirmationCallback(confirmed);
+      pendingConfirmationCallback = null;
+    }
+  },
+  inputEmitter,
 };

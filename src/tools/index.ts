@@ -5,6 +5,8 @@ const os = require('os');
 const mcpLoader = require("../mcp/mcp_loader");
 const modePrompts = require("../utils/mode_prompts");
 
+function safeStatLocal(p) { try { return fs.statSync(p); } catch { return null; } }
+
 // Current mode state. Set by the CLI /plan, /act, /auto slash commands,
 // or by detectAutoSwitch on the user prompt.
 let _currentMode = 'act';
@@ -25,7 +27,15 @@ for (const file of files) {
 function normalizeToolCall(obj) {
   try {
     if (!obj || typeof obj !== 'object') return obj;
-    if (obj.tool) return obj;
+    if (obj.tool) {
+      const isLocal = tools[obj.tool] !== undefined;
+      const isMcp = mcpLoader.getRegistry().some((x) => x.name === obj.tool);
+      if (!isLocal && !isMcp && obj.prompt !== undefined) {
+        obj.name = obj.tool;
+        obj.tool = "run_sub_agent";
+      }
+      return obj;
+    }
     if (obj.response !== undefined) return obj;
 
     if (Array.isArray(obj.tools)) {
@@ -34,9 +44,20 @@ function normalizeToolCall(obj) {
         .map(t => {
           if (t.name) {
             const { name, ...rest } = t;
+            const isLocal = tools[name] !== undefined;
+            const isMcp = mcpLoader.getRegistry().some((x) => x.name === name);
+            if (!isLocal && !isMcp && rest.prompt !== undefined) {
+              return { tool: "run_sub_agent", name: name, ...rest };
+            }
             return { tool: name, ...rest };
           }
           if (t.tool) {
+            const isLocal = tools[t.tool] !== undefined;
+            const isMcp = mcpLoader.getRegistry().some((x) => x.name === t.tool);
+            if (!isLocal && !isMcp && t.prompt !== undefined) {
+              t.name = t.tool;
+              t.tool = "run_sub_agent";
+            }
             return t;
           }
           for (const key of Object.keys(t)) {
@@ -49,6 +70,12 @@ function normalizeToolCall(obj) {
           // Fallback: treat any key (except tool) with an object value as a tool name
           for (const key of Object.keys(t)) {
             if (key !== 'tool' && typeof t[key] === 'object' && t[key] !== null) {
+              const params = t[key];
+              const isLocal = tools[key] !== undefined;
+              const isMcp = mcpLoader.getRegistry().some((x) => x.name === key);
+              if (!isLocal && !isMcp && params.prompt !== undefined) {
+                return { tool: "run_sub_agent", name: key, ...params };
+              }
               return { tool: key, ...t[key] };
             }
           }
@@ -62,7 +89,14 @@ function normalizeToolCall(obj) {
 
     if (obj.name && obj.parameters && typeof obj.parameters === 'object') {
       const result = { ...obj.parameters };
-      result.tool = obj.name;
+      const isLocal = tools[obj.name] !== undefined;
+      const isMcp = mcpLoader.getRegistry().some((x) => x.name === obj.name);
+      if (!isLocal && !isMcp && result.prompt !== undefined) {
+        result.tool = "run_sub_agent";
+        if (!result.name) result.name = obj.name;
+      } else {
+        result.tool = obj.name;
+      }
       return result;
     }
 
@@ -80,7 +114,14 @@ function normalizeToolCall(obj) {
     for (const key of Object.keys(obj)) {
       if (key !== 'tools' && key !== 'response' && typeof obj[key] === 'object' && obj[key] !== null) {
         const params = obj[key];
-        params.tool = key;
+        const isLocal = tools[key] !== undefined;
+        const isMcp = mcpLoader.getRegistry().some((x) => x.name === key);
+        if (!isLocal && !isMcp && params.prompt !== undefined) {
+          params.tool = "run_sub_agent";
+          if (!params.name) params.name = key;
+        } else {
+          params.tool = key;
+        }
         return params;
       }
     }
@@ -150,7 +191,7 @@ function buildBaseScaffolding(userPrompt) {
   let dynamicRulesContext = '';
   try {
     const cwd = process.cwd();
-    const globalConfig = path.join(os.homedir(), '.deepseek_cli', 'workflows');
+    const globalConfig = path.join(os.homedir(), '.ds_config', 'workflows');
     const localConfig = path.join(cwd, 'ds_config', 'workflows');
 
     const rules = [];
@@ -195,9 +236,38 @@ function buildBaseScaffolding(userPrompt) {
   } catch { }
 
   const gitContext = getGitContext();
+  // Inject live state at build time:
+  //  - scratch file inventory (so the model re-grounds on task.md / thinking.md)
+  //  - project memory (AGENTS.md content)
+  let scratchInventory = '';
+  try {
+    const { getScratchPath } = require('../utils/config');
+    const scratchDir = getScratchPath();
+    if (fs.existsSync(scratchDir)) {
+      const items = fs.readdirSync(scratchDir, { withFileTypes: true });
+      const lines = [];
+      for (const it of items) {
+        if (it.name.startsWith('.')) continue;
+        const full = path.join(scratchDir, it.name);
+        const st = safeStatLocal(full);
+        if (!st) continue;
+        const mtime = new Date(st.mtimeMs).toISOString().replace('T', ' ').slice(0, 19);
+        if (it.isDirectory()) lines.push(`  📁 ${it.name}/  (modified ${mtime})`);
+        else lines.push(`  📄 ${it.name}  (${st.size}B, ${mtime})`);
+      }
+      if (lines.length) {
+        scratchInventory = '\n\n# LIVE SCRATCH INVENTORY (' + scratchDir + ')\n' + lines.join('\n') + '\n  → If task.md is present, call update_task(action="get") FIRST this turn.\n  → If thinking.md is present, call read_scratch_file("thinking.md") to skim prior reasoning.\n';
+      }
+    }
+  } catch {}
+  let projectMemory = '';
+  try {
+    const m = require('./update_project_memory');
+    if (typeof m.buildMemoryContext === 'function') projectMemory = '\n\n' + m.buildMemoryContext();
+  } catch {}
   return `You are the Head Brain (Main Agent) — a hierarchical Software Architect and Coordinator. Your role is high-level planning, orchestrating, reviewing, stitching, and DIRECTLY implementing code changes.
 
-# COORDINATION & IMPLEMENTATION RULE (UPDATED)
+# COORDINATION & IMPLEMENTATION RULE
 - You are PERMITTED to write code features, implement functions/classes, and create logic yourself when appropriate. You do not need to delegate everything.
 - You SHOULD delegate only when a task is large, complex, or benefits from parallel execution (using the "run_sub_agent" tool).
 - You CAN call file tools (like "patch_file", "patch_multiple_files", "write_file", etc.) for any purpose: creating new files, modifying existing files, reviewing code, stitching, wiring imports, fixing bugs, or adjusting variables.
@@ -205,9 +275,20 @@ function buildBaseScaffolding(userPrompt) {
 - You may also create implementation plans and task files for yourself without needing a sub-agent.
 - Once a Sub-Agent finishes its micro-task, its tab is automatically destroyed. You review the changes, patch any integration issues, and then move to the next micro-task.
 
+# DELEGATE-ONLY-WHEN-INDEPENDENT
+- The mode_prompts blocks (TOOL_CATALOG, SHARED_SAFETY, THINK_OUT_LOUD, TASK_MD_RULE, SCRATCH_REUSE_RULE, WRITE-AND-RUN-TESTS, ERROR_RECOVERY, CLARIFICATION, PROHIBITED_PHRASES, EXAMPLES, ACT_PROMPT) are appended after this base scaffolding. They are the single source of truth for the rules; this scaffolding is the project-state wrapper.
+- Use the **think** tool before big decisions. Use **ask_user** to clarify. Use **update_task** to track multi-step work. Use **update_project_memory** to remember lessons.
+${projectMemory}${scratchInventory}
+# TOOL-BY-TOOL QUICK REFERENCE (full catalog in TOOL_CATALOG block below)
+- Read: codebase_summary, list_directory, file_info, read_file, glob_search, grep_search, quick_search, get_file_diff, get_recent_errors.
+- Edit: write_file (NEW only), patch_file (PRIMARY), patch_multiple_files, restore_file.
+- Execute: execute_shell_command.
+- Memory: write_scratch_file, read_scratch_file, list_scratch_files, update_task, update_project_memory, think, ask_user.
+- Snapshots: snapshot_state, restore_to_snapshot.
+- Sub-agents: run_sub_agent, search_tool_registry.
+- Workflows: find_workflow, get_workflow_content.
 
-
-# WRITE-AND-RUN-OWN-TESTS RULE (MANDATORY)
+# WORKFLOW-FIRST (still applies)
 When you change code (any file under src/, lib/, app/, services/, or anywhere in the project that contains real logic — NOT docs, comments, or pure markdown), you MUST:
 1. Use write_file to create a temporary test file in the project test convention:
    - Node/TypeScript: ./test_<feature>.js (or .ts if project uses TS natively) in the project root
@@ -278,7 +359,7 @@ If your final answer does NOT include a self-test result line, the orchestrator 
 - You can go back and forth between reading files and sequential thinking if you need to recheck, clarify, or verify any codebase details during your analysis.
 
 # SEQUENTIAL THINKING RULE (MANDATORY)
-- After understanding the codebase context and before dispatching any sub-agent or writing the plan, you MUST call the sequential thinking tool (available as an MCP tool, search the registry/MCP lists to locate its name, e.g. "sequential_thinking") to structure your reasoning, analyze the design, and define precise parameters and interface contracts.
+- After understanding the codebase context and before dispatching any sub-agent or writing the plan, you MUST call the native think tool to structure your reasoning, analyze the design, and define precise parameters and interface contracts.
 
 # SUB-AGENT DISPATCH PROTOCOL
 When calling "run_sub_agent", you MUST write a HIGH-DENSITY, UNAMBIGUOUS prompt. A system guard will REJECT your prompt and force you to retry if any of the following rules are violated:
@@ -314,12 +395,12 @@ Parallel independent tool calls format:
 Before executing any code changes or tool calls that modify files, you MUST first create two files:
 - implementation_plan.md: Contains the step-by-step plan, files to modify, and expected outcomes.
 - task.md: Contains the current micro-task description and its status (pending, in-progress, completed).
-For the main agent, place these files in the project root: /home/jaadu/.deepseek_cli/implementation_plan.md and /home/jaadu/.deepseek_cli/task.md.
+For the main agent, place these files in the project root: /home/jaadu/.ds_config/implementation_plan.md and /home/jaadu/.ds_config/task.md.
 Read these files at the start of each task, update them as each step progresses, and ensure they accurately reflect the current state. Do not proceed with code changes without an up-to-date plan and task file.
 
 # DYNAMIC VERIFICATION (WORKFLOW-BASED)
 Verification of code changes (syntax, compilation, tests) is **not hardcoded**. Instead, the system will automatically load and execute dynamic workflows from:
-- \`~/.deepseek_cli/workflows/\` (global)
+- \`~/.ds_config/workflows/\` (global)
 - \`ds_config/workflows/\` (project-specific)
 
 After any file modification, the system checks for workflow files (\`.md\` files) that match the detected project language (based on \`package.json\`, \`go.mod\`, \`Cargo.toml\`, \`requirements.txt\`, etc.). If a matching workflow exists, its instructions are executed. If no workflow matches, a basic syntax check is performed using the appropriate interpreter.
@@ -360,7 +441,7 @@ function getSubAgentSystemPrompt(userPrompt, agentNumber = 1) {
   let dynamicRulesContext = '';
   try {
     const cwd = process.cwd();
-    const globalConfig = path.join(os.homedir(), '.deepseek_cli', 'workflows');
+    const globalConfig = path.join(os.homedir(), '.ds_config', 'workflows');
     const localConfig = path.join(cwd, 'ds_config', 'workflows');
 
     const rules = [];
@@ -406,7 +487,8 @@ function getSubAgentSystemPrompt(userPrompt, agentNumber = 1) {
 
   const gitContext = getGitContext();
 
-  const subAgentDir = `ds_config/sub_agents/${agentNumber}/ds_config`;
+  const { DS_CONFIG_DIR } = require("../utils/config");
+  const subAgentDir = path.join(DS_CONFIG_DIR, "sub_agents", String(agentNumber), "ds_config");
   const workspacePathsContext = `
 # SUB-AGENT WORKSPACE PATHS (CRITICAL)
 - You have a dedicated, isolated workspace directory: \`${subAgentDir}/\`
@@ -422,8 +504,8 @@ function getSubAgentSystemPrompt(userPrompt, agentNumber = 1) {
 
   return `You are a Sub-Agent (Grunt Worker) executing a precise micro-task of a larger implementation plan. You are a precise, obedient machine. You follow instructions exactly.
 ${workspacePathsContext}
-# SEQUENTIAL THINKING (MCP TOOL)
-- For complex logic problems or architectural decisions, you should search the MCP tool list and use the sequential thinking tool (e.g. "sequential_thinking") to record your step-by-step reasoning.
+# SEQUENTIAL THINKING
+- For complex logic problems or architectural decisions, you should search the MCP tool list and use the think tool to record your step-by-step reasoning.
 
 # LANGUAGE & OUTPUT RULES
 - You MUST respond in English at all times.
@@ -441,7 +523,7 @@ Parallel independent tool calls format:
 Before executing any code changes or tool calls that modify files, you MUST first create two files:
 - implementation_plan.md: Contains the step-by-step plan, files to modify, and expected outcomes.
 - task.md: Contains the current micro-task description and its status (pending, in-progress, completed).
-For sub-agents, place these files in ds_config/sub_agents/${agentNumber}/implementation_plan.md and ds_config/sub_agents/${agentNumber}/task.md, where ${agentNumber} is the integer provided in the run_sub_agent call.
+For sub-agents, place these files in ~/.ds_config/sub_agents/${agentNumber}/implementation_plan.md and ~/.ds_config/sub_agents/${agentNumber}/task.md, where ${agentNumber} is the integer provided in the run_sub_agent call.
 Read these files at the start of each task, update them as each step progresses, and ensure they accurately reflect the current state. Do not proceed with code changes without an up-to-date plan and task file.
 
 

@@ -6,8 +6,54 @@ const brainRegistry = require("./brains/registry");
 const { loadConfig } = require("../utils/config");
 const harnessGuards = require("../utils/harness_guards");
 const modePrompts = require("../utils/mode_prompts");
+const { buildReminderPrompt } = require("../utils/reminder_prompt");
 const path = require("path");
 const fs = require("fs");
+const os = require("os");
+
+// ── Implementation plan auto-stub ─────────────────────────────────────────────
+const PLAN_STUB = `# Implementation Plan\n\n## 1. Summary\n<1-3 sentences. What the user actually wants.>\n\n## 2. Research findings (with citations as path/to/file.ts:LINE)\n- What you learned from reading\n- Dependencies / version constraints\n- Project conventions to follow\n\n## 3. File-by-file plan\n### Files to MODIFY\n- path/to/file.ts:LINE-LINE — what changes and WHY\n  New code: <paste it>\n\n### Files to CREATE\n- path/to/new.ts — outline of new file\n\n### Files to DELETE\n- <rare; flag as risk>\n\n## 4. Sub-agent delegation plan\n- List sub-agents (or "no sub-agents needed")\n- Coordination order\n\n## 5. Verification plan\n- Test files to create (happy / failure / regression)\n- Existing tests to re-run\n- Project workflow to follow (find_workflow)\n\n## 6. Risks and open questions\n- What could go wrong\n- Destructive operations the user should approve\n\n## 7. Done criteria (CHECKLIST)\n- [ ] Specific observable outcome 1\n- [ ] Specific observable outcome 2\n- [ ] Test name X passes\n- [ ] No regression in Y\n\n## 8. Handoff\nEither "READY: <one-line summary>" or "ASK_USER: <single question for the user>"\n`;
+const PLAN_PATH = './implementation_plan.md';
+
+function ensureImplementationPlanStub() {
+  try {
+    if (!fs.existsSync(PLAN_PATH)) {
+      fs.writeFileSync(PLAN_PATH, PLAN_STUB, 'utf8');
+    }
+  } catch (err) {
+    // Non-fatal: if we can't write, plan mode still works, just no pre-stub.
+  }
+}
+
+function readPlanHandoff(planPath) {
+  try {
+    if (!fs.existsSync(planPath)) return null;
+    const md = fs.readFileSync(planPath, 'utf8');
+    const readyMatch = md.match(/##\s*8\.\s*Handoff\s*\n+\s*(READY:[^\n]+)/i);
+    const askMatch = md.match(/##\s*8\.\s*Handoff\s*\n+\s*(ASK_USER:[^\n]+)/i);
+    if (readyMatch) return { kind: 'READY', summary: readyMatch[1].trim() };
+    if (askMatch) return { kind: 'ASK_USER', summary: askMatch[1].trim() };
+    return null;
+  } catch { return null; }
+}
+
+function parseHandoffFromResponse(text) {
+  if (!text || typeof text !== 'string') return null;
+  const readyMatch = text.match(/\bREADY:\s*([^\n]{1,300})/);
+  const askMatch = text.match(/\bASK_USER:\s*([^\n]{1,300})/);
+  if (readyMatch) return { kind: 'READY', summary: 'READY: ' + readyMatch[1].trim() };
+  if (askMatch) return { kind: 'ASK_USER', summary: 'ASK_USER: ' + askMatch[1].trim() };
+  return null;
+}
+
+function getScratchDirForState() {
+  try {
+    const { getScratchPath } = require('../utils/config');
+    return getScratchPath();
+  } catch {
+    return path.join(os.homedir(), '.ds_config', 'scratch');
+  }
+}
 const {
   getCurrentSessionId,
   createSession,
@@ -582,33 +628,7 @@ function validateSubAgentPrompt(prompt) {
   if (!prompt || typeof prompt !== 'string') {
     return `[SYSTEM INTERCEPT - INVALID SUB-AGENT PROMPT]\nThe 'prompt' field is empty or missing. Sub-agent calls MUST include a detailed prompt.`;
   }
-
-  const trimmed = prompt.trim();
-
-  // Minimum length: prompts shorter than 120 chars are almost certainly too vague
-  if (trimmed.length < 120) {
-    return `[SYSTEM INTERCEPT - SUB-AGENT PROMPT TOO VAGUE]\nYour run_sub_agent prompt is only ${trimmed.length} characters long. Sub-agent prompts MUST be at minimum 120 characters and include:\n  1. The exact file path(s) to edit.\n  2. The precise function/class/section to modify.\n  3. The exact new code or logic to implement (no placeholders).\n  4. Any interface contracts (function signatures, return types, exports).\n  5. What NOT to touch.\n\nRewrite the prompt with these details before dispatching the sub-agent.`;
-  }
-
-  // Must reference at least one file path (contains a slash and a recognizable extension)
-  const hasFilePath = /[\w./\\-]+\.(?:js|ts|jsx|tsx|mjs|cjs|py|go|rs|json|md|css|sh)/.test(trimmed);
-  if (!hasFilePath) {
-    return `[SYSTEM INTERCEPT - SUB-AGENT PROMPT MISSING FILE TARGET]\nYour run_sub_agent prompt does not reference any target file. Sub-agent prompts MUST specify the exact file path(s) to read or modify (e.g. 'src/core/orchestrator.js').\n\nRewrite the prompt to include specific file targets.`;
-  }
-
-  // Must not be all vague action words with no specifics
-  const vagueOnlyRegex = /^\s*(implement|add|create|update|fix|make|change|do|handle|write)\s+(it|this|that|the feature|the fix|the change|the code)\s*\.?\s*$/i;
-  if (vagueOnlyRegex.test(trimmed)) {
-    return `[SYSTEM INTERCEPT - SUB-AGENT PROMPT IS VAGUE COMMAND]\nYour run_sub_agent prompt is a vague command with no specifics. Rephrase with exact implementation details.`;
-  }
-
-  // Must not contain lazy placeholder markers
-  const placeholderRegex = /(\.{3}\s*rest of|TODO:|FIXME:|placeholder|\[your code here\]|\/\/ fill in)/i;
-  if (placeholderRegex.test(trimmed)) {
-    return `[SYSTEM INTERCEPT - SUB-AGENT PROMPT CONTAINS PLACEHOLDERS]\nYour run_sub_agent prompt contains placeholder text (e.g. '... rest of', 'TODO', 'fill in'). Sub-agent prompts MUST contain the complete, concrete specification — no lazy shortcuts.`;
-  }
-
-  return null; // Passes all checks
+  return null; // Bypass all vagueness and strict target file validation rules
 }
 
 async function runAutomaticVerification(modifiedFiles, latestResponseText) {
@@ -839,71 +859,9 @@ function setBusy(val) {
 
 function showConfirmation(message) {
   return new Promise((resolve) => {
-    const blessed = require("blessed");
-    const screen = tui.scr;
-
-    const overlay = blessed.box({
-      parent: screen,
-      top: "center",
-      left: "center",
-      width: "50%",
-      height: 7,
-      border: { type: "line" },
-      style: { border: { fg: "#ffa500" }, bg: "default" },
-      keys: true,
-      vi: true,
+    tui.askConfirmation(message, (confirmed) => {
+      resolve(confirmed);
     });
-
-    blessed.text({
-      parent: overlay,
-      top: 1,
-      left: 2,
-      right: 2,
-      content: message,
-      style: { fg: "#ffffff" },
-    });
-
-    const yesBtn = blessed.button({
-      parent: overlay,
-      bottom: 1,
-      left: "center",
-      width: 10,
-      height: 1,
-      content: " Yes ",
-      style: { bg: "#2a2a2a", fg: "#00ff00", focus: { bg: "#00ff00", fg: "#000000" } },
-      mouse: true,
-      keys: true,
-      shrink: true,
-    });
-
-    const noBtn = blessed.button({
-      parent: overlay,
-      bottom: 1,
-      left: "center+12",
-      width: 10,
-      height: 1,
-      content: " No ",
-      style: { bg: "#2a2a2a", fg: "#ff0000", focus: { bg: "#ff0000", fg: "#000000" } },
-      mouse: true,
-      keys: true,
-      shrink: true,
-    });
-
-    yesBtn.focus();
-
-    const cleanup = (result) => {
-      overlay.destroy();
-      screen.render();
-      resolve(result); // result should be true or false
-    };
-
-    yesBtn.on("press", () => cleanup(true));
-    noBtn.on("press", () => cleanup(false));      // Explicit false
-    yesBtn.key(["enter"], () => cleanup(true));
-    noBtn.key(["enter"], () => cleanup(false));   // Explicit false
-    overlay.key(["escape"], () => cleanup(false));// Escape = false
-
-    screen.render();
   });
 }
 
@@ -933,7 +891,7 @@ async function handleGitDirtyWorkspace() {
     // Ignore other errors (non-git repo, git command failure, etc.)
   }
 }
-async function ask(prompt) {
+async function ask(prompt, options = {}) {
   busy = true;
   let lastToolCalls = [];
   function checkToolLoop(tool, params) {
@@ -987,8 +945,8 @@ async function ask(prompt) {
     logItems.push({ type: "divider" });
     logItems.push({ type: "separator" });
   }
-  logItems.push({ type: "user", text: prompt });
-  saveMessage(sid, "user", prompt);
+  logItems.push({ type: "user", text: prompt, checkpointId: options.checkpointId });
+  saveMessage(sid, "user", prompt, { checkpointId: options.checkpointId });
 
   let dsItem = { type: "deepseek", text: "", spinning: true };
   logItems.push(dsItem);
@@ -1058,8 +1016,44 @@ async function ask(prompt) {
     const list = checkpoints.listCheckpoints();
     const cp = list.length > 0 ? list[list.length - 1] : null;
 
-    let currentPrompt = `[System Instructions]\n${getSystemPrompt(promptTextForBrain)}\n\n[User Request]\n${promptTextForBrain}`;
+    // Auto-stub the plan file when entering plan mode (or first tool in plan mode)
+    const currentMode = modePrompts.getMode();
+    if (currentMode === 'plan') {
+      ensureImplementationPlanStub();
+    }
 
+    // Build the reminder state for this turn
+    const scratchDir = getScratchDirForState();
+    const pendingPlan = readPlanHandoff(PLAN_PATH);
+    const taskPath = (function () {
+      try {
+        const ut = require('../tools/update_task');
+        if (ut && typeof ut.getTaskPath === 'function') {
+          const p = ut.getTaskPath();
+          if (fs.existsSync(p)) return p;
+        }
+      } catch {}
+      return null;
+    })();
+    const reminderState = {
+      mode: currentMode,
+      toolCallCount: 0,
+      maxToolCallsPerTurn: 30,
+      lastToolCalls: lastToolCalls.slice(-3),
+      recentFiles: Array.from(modifiedFiles).slice(-5).map(p => p),
+      recentErrors: [],
+      lastUserMessage: prompt,
+      modeJustChanged: false,
+      scratchDir,
+      hasEditedFiles,
+      hasVerified,
+      pendingPlan: pendingPlan && pendingPlan.kind === 'READY' ? { path: PLAN_PATH, summary: pendingPlan.summary } : null,
+      taskPath,
+    };
+
+    let currentPrompt = `[System Instructions]\n${getSystemPrompt(promptTextForBrain)}\n\n[User Request]\n${promptTextForBrain}`;
+    // Inject the reminder on the very first turn so the model re-grounds immediately.
+    currentPrompt = currentPrompt + '\n\n' + buildReminderPrompt(reminderState);
 
 
     let isInitial = true;
@@ -1073,7 +1067,7 @@ async function ask(prompt) {
 
       const streamPromise = brain.getCompletionStream(currentPrompt, {
         onStartCalled: () => {
-          dsItem.spinning = false;
+          dsItem.spinning = true;
           dsItem.expanded = true;
           tui.stopGlobalSpinner();
         },
@@ -1296,11 +1290,16 @@ async function ask(prompt) {
             ? `\n\nNote: ${calls.length - MAX_PAR
             } call(s) truncated — issue them next turn if needed.`
             : "";
-        const FORMAT_REMINDER = `\n\n[Reminder: You MUST respond in English only. You can either invoke another tool using JSON, or output plain text to respond to the user if you are done.\n` +
-          `JSON Format (Single):\n{"tool": "tool_name", "param1": "val"}\n` +
-          `JSON Format (Parallel):\n{"tools": [{"name": "t1", "p1": "v1"}, {"name": "t2"}]}\n` +
-          `CRITICAL: (1) NEVER use placeholder comments (e.g. "// ... rest of code"). Complete code only. (2) Review unified line diffs returned in tool outputs. (3) Verification checks (syntax/imports/tests) run automatically before completion. Ensure no errors are introduced.\n` +
-          `LANGUAGE: English only. Never respond in Chinese or any other non-English language.]`;
+        reminderState.toolCallCount = lastToolCalls.length;
+        reminderState.lastToolCalls = lastToolCalls.slice(-3);
+        reminderState.recentFiles = Array.from(modifiedFiles).slice(-5).map(p => p);
+        reminderState.hasEditedFiles = hasEditedFiles;
+        reminderState.hasVerified = hasVerified;
+        const handoffInResponse = parseHandoffFromResponse(responseText);
+        if (handoffInResponse && handoffInResponse.kind === 'READY') {
+          reminderState.pendingPlan = { path: PLAN_PATH, summary: handoffInResponse.summary };
+        }
+        const FORMAT_REMINDER = buildReminderPrompt(reminderState);
         currentPrompt = `${combined}${overflow}${FORMAT_REMINDER}`;
         isInitial = false;
         dsItem = { type: "deepseek", text: "", spinning: true };
@@ -1404,11 +1403,17 @@ async function ask(prompt) {
 
         await new Promise((r) => setTimeout(r, 100));
 
-        const FORMAT_REMINDER = `\n\n[Reminder: You MUST respond in English only. You can either invoke another tool using JSON, or output plain text to respond to the user if you are done.\n` +
-          `JSON Format (Single):\n{"tool": "tool_name", "param1": "val"}\n` +
-          `JSON Format (Parallel):\n{"tools": [{"name": "t1", "p1": "v1"}, {"name": "t2"}]}\n` +
-          `CRITICAL: (1) NEVER use placeholder comments (e.g. "// ... rest of code"). Complete code only. (2) Review unified line diffs returned in tool outputs. (3) Verification checks (syntax/imports/tests) run automatically before completion. Ensure no errors are introduced.\n` +
-          `LANGUAGE: English only. Never respond in Chinese or any other non-English language.]`;
+        // Refresh reminder state with latest counters / files / handoff
+        reminderState.toolCallCount = lastToolCalls.length;
+        reminderState.lastToolCalls = lastToolCalls.slice(-3);
+        reminderState.recentFiles = Array.from(modifiedFiles).slice(-5).map(p => p);
+        reminderState.hasEditedFiles = hasEditedFiles;
+        reminderState.hasVerified = hasVerified;
+        const handoffInResponse2 = parseHandoffFromResponse(responseText);
+        if (handoffInResponse2 && handoffInResponse2.kind === 'READY') {
+          reminderState.pendingPlan = { path: PLAN_PATH, summary: handoffInResponse2.summary };
+        }
+        const FORMAT_REMINDER = buildReminderPrompt(reminderState);
         currentPrompt = `[Tool Output for ${toolName}]\n${toolResult}${FORMAT_REMINDER}`;
         isInitial = false;
 
@@ -1522,4 +1527,10 @@ module.exports = {
   setBusy,
   runAutomaticVerification,
   compactCurrentSession,
+  // New helpers (exported for testing and other tools)
+  ensureImplementationPlanStub,
+  readPlanHandoff,
+  parseHandoffFromResponse,
+  getScratchDirForState,
+  PLAN_PATH,
 };

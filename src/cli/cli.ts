@@ -127,39 +127,33 @@ tui.input.on("submit", async (val) => {
   // The model prompt itself changes when the mode changes. /plan locks
   // down file mutation (write_file only for ./implementation_plan.md);
   // /act unlocks all tools; /auto auto-detects per turn.
-  if (val === "/plan" || val.startsWith("/plan ")) {
+  if (val === "/plan" || val.startsWith("/plan")) {
     const tools = require("../tools");
     tools.setMode("plan");
     if (tui.setModeBadge) tui.setModeBadge("plan");
-    const logItems = tui.getLogItems();
-    logItems.push({ type: "status", text: "🟦 MODE: plan (active). Read-only. write_file allowed only for ./implementation_plan.md. The NEXT turn will see the new system prompt. Type /act to switch back." });
     tui.renderLog();
     tui.refocusInput();
     return;
   }
-  if (val === "/act" || val.startsWith("/act ")) {
+  if (val === "/act" || val.startsWith("/act")) {
     const tools = require("../tools");
     tools.setMode("act");
     if (tui.setModeBadge) tui.setModeBadge("act");
-    const logItems = tui.getLogItems();
-    logItems.push({ type: "status", text: "🟩 MODE: act (active). Full tool access. The NEXT turn will see the new system prompt. Type /plan to switch back." });
     tui.renderLog();
     tui.refocusInput();
     return;
   }
-  if (val === "/auto" || val.startsWith("/auto ")) {
+  if (val === "/auto" || val.startsWith("/auto")) {
     const tools = require("../tools");
     tools.setMode("auto");
     if (tui.setModeBadge) tui.setModeBadge("auto");
-    const logItems = tui.getLogItems();
-    logItems.push({ type: "status", text: "⬜ MODE: auto (active). Mode will be detected per turn from your wording. Type /act or /plan to lock a mode." });
     tui.renderLog();
     tui.refocusInput();
     return;
   }
 
   // ── /install-workflow <url> ───────────────────────────────────────────────
-  if (val.startsWith("/install-workflow ")) {
+  if (val.startsWith("/install-workflow")) {
     const url = val.replace("/install-workflow ", "").trim();
     if (!url) {
       const logItems = tui.getLogItems();
@@ -174,7 +168,7 @@ tui.input.on("submit", async (val) => {
 
     const { execSync } = require("child_process");
     try {
-      const workflowsDir = path.join(os.homedir(), ".deepseek_cli", "workflows");
+      const workflowsDir = path.join(os.homedir(), ".ds_config", "workflows");
       fs.mkdirSync(workflowsDir, { recursive: true });
       const filename = path.basename(url).replace(/[?#].*$/, "") || "workflow.md";
       const dest = path.join(workflowsDir, filename);
@@ -190,7 +184,7 @@ tui.input.on("submit", async (val) => {
   }
 
   // ── /install-mcp <name> <npx-package> [args...] ──────────────────────────
-  if (val.startsWith("/install-mcp ")) {
+  if (val.startsWith("/install-mcp")) {
     const parts = val.replace("/install-mcp ", "").trim().split(/\s+/);
     if (parts.length < 2) {
       const logItems = tui.getLogItems();
@@ -236,7 +230,7 @@ tui.input.on("submit", async (val) => {
   // ── /list-workflows ──────────────────────────────────────────────────────────
   if (val === "/list-workflows") {
     const logItems = tui.getLogItems();
-    const globalDir = path.join(os.homedir(), ".deepseek_cli", "workflows");
+    const globalDir = path.join(os.homedir(), ".ds_config", "workflows");
     const localDir = path.join(process.cwd(), "ds_config", "workflows");
 
     let output = "## Installed Workflows\n\n";
@@ -359,11 +353,6 @@ Tip: In AUTO mode, typing "plan it first" switches to PLAN automatically, and "g
 
   // Auto-checkpoint before prompt execution
   const cp = checkpoints.createCheckpoint(val);
-  if (cp) {
-    const logItems = tui.getLogItems();
-    logItems.push({ type: "status", text: `[Checkpoint ${cp.id} created]` });
-    tui.renderLog();
-  }
 
   // Auto-detect a mode switch from the user wording (only in 'auto' mode).
   try {
@@ -374,7 +363,7 @@ Tip: In AUTO mode, typing "plan it first" switches to PLAN automatically, and "g
     }
   } catch (_) { /* non-fatal */ }
 
-  orchestrator.ask(val).catch(() => {});
+  orchestrator.ask(val, cp ? { checkpointId: cp.id } : {}).catch(() => {});
 });
 
 tui.scr.key(["C-c"], () => cleanupAndExit());
@@ -408,12 +397,12 @@ async function loadSessionIntoTUI(session) {
         logItems.push({ type: "divider" });
         logItems.push({ type: "separator" });
       }
-      logItems.push({ type: "user", text: msg.content });
+      logItems.push({ type: "user", text: msg.content, checkpointId: msg.metadata?.checkpointId });
     } else if (msg.role === "assistant") {
       logItems.push({
         type: "deepseek",
         text: msg.content,
-        thinking: msg.thinking || "",
+        thinking: msg.metadata?.thinking || "",
         expanded: false,
         spinning: false,
       });
@@ -421,6 +410,7 @@ async function loadSessionIntoTUI(session) {
       logItems.push({
         type: "tool",
         name: msg.content,
+        params: msg.metadata?.params,
         status: "completed",
         result: "",
         expanded: false,
@@ -429,7 +419,7 @@ async function loadSessionIntoTUI(session) {
       const t = logItems
         .slice()
         .reverse()
-        .find((i) => i.type === "tool" && i.name === msg.tool);
+        .find((i) => i.type === "tool" && i.name === msg.metadata?.tool);
       if (t) t.result = msg.content;
     }
   }

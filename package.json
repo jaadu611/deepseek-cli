@@ -1,14 +1,44 @@
 {
-  "name": "deepseek-cli",
+  "name": "deepseek-chat",
   "version": "1.0.0",
-  "description": "",
-  "main": "dist/main.js",
+  "description": "DeepSeek AI CLI & VSCode Extension Chat Panel",
+  "main": "dist/src/extension.js",
+  "publisher": "deepseek-cli",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "AI",
+    "Programming Language"
+  ],
+  "activationEvents": [],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "deepseek-sidebar-container",
+          "title": "DeepSeek",
+          "icon": "comment-discussion"
+        }
+      ]
+    },
+    "views": {
+      "deepseek-sidebar-container": [
+        {
+          "type": "webview",
+          "id": "deepseek-cli-sidebar",
+          "name": "DeepSeek Chat"
+        }
+      ]
+    }
+  },
   "bin": {
     "deepseek-cli": "./dist/main.js",
     "ds": "./dist/main.js"
   },
   "scripts": {
     "build": "tsc",
+    "watch": "tsc -w",
     "start": "node dist/main.js",
     "dev": "node src/cli/cli.js",
     "test": "echo \"Error: no test specified\" && exit 1"
@@ -19,14 +49,13 @@
   "type": "commonjs",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "blessed": "^0.1.81",
     "glob": "^10.4.1",
     "playwright": "^1.60.0",
     "playwright-stealth": "^0.0.1"
   },
   "devDependencies": {
-    "@types/blessed": "^0.1.27",
     "@types/node": "^20.19.42",
+    "@types/vscode": "^1.80.0",
     "typescript": "^5.9.3"
   }
 }

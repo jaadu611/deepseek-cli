@@ -4,7 +4,7 @@
 const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
-const LABELS_FILE = path.join(require('os').homedir(), '.deepseek_cli', 'ds_config', 'snapshots.json');
+const LABELS_FILE = path.join(require('os').homedir(), '.ds_config', 'snapshots.json');
 function loadSnapshots() {
     try {
         if (!fs.existsSync(LABELS_FILE))

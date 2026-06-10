@@ -2,7 +2,7 @@
 const fs = require('fs');
 const path = require('path');
 const { glob } = require('glob');
-const IGNORE_DIRS = new Set(['node_modules', '.git', 'dist', 'build', '__pycache__', '.next', '.cache', 'target', 'venv', '.venv', '.deepseek_cli']);
+const IGNORE_DIRS = new Set(['node_modules', '.git', 'dist', 'build', '__pycache__', '.next', '.cache', 'target', 'venv', '.venv', '.ds_config']);
 const NOTABLE_FILES = [
     'package.json', 'package-lock.json', 'pnpm-lock.yaml', 'yarn.lock',
     'requirements.txt', 'pyproject.toml', 'setup.py', 'Pipfile',

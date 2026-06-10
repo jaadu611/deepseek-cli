@@ -11,6 +11,10 @@ class DeepSeekWebBrain extends BaseBrain {
     this.initializing = null;
     this.exposedPages = new WeakSet();
     this.initPromise = null;
+    this.browser = null;
+    this.context = null;
+    this.connectingPromise = null;
+    this.launchingBrowser = false;
 
     this.pageStates = new WeakMap();
   }
@@ -38,11 +42,38 @@ class DeepSeekWebBrain extends BaseBrain {
     return this.pageStates.get(page);
   }
 
+  async getBrowserConnection() {
+    if (this.browser) {
+      try {
+        await this.browser.contexts()[0].pages();
+        return this.browser;
+      } catch (err) {
+        this.browser = null;
+        this.context = null;
+      }
+    }
+    if (this.connectingPromise) return this.connectingPromise;
+    this.connectingPromise = (async () => {
+      await this.waitForCDP();
+      const browser = await chromium.connectOverCDP("http://127.0.0.1:9222");
+      this.browser = browser;
+      this.context = browser.contexts()[0];
+
+      this.browser.on("disconnected", () => {
+        this.browser = null;
+        this.context = null;
+        this.connectingPromise = null;
+      });
+
+      this.connectingPromise = null;
+      return browser;
+    })();
+    return this.connectingPromise;
+  }
+
   async createNewPage() {
-    await this.waitForCDP();
-    const browser = await chromium.connectOverCDP("http://127.0.0.1:9222");
-    const ctx = browser.contexts()[0];
-    const page = await ctx.newPage();
+    await this.getBrowserConnection();
+    const page = await this.context.newPage();
     await this.setupInterceptors(page);
     await page.goto("https://chat.deepseek.com/").catch(() => {});
     return page;
@@ -173,9 +204,12 @@ class DeepSeekWebBrain extends BaseBrain {
   }
 
   launchBrowser() {
+    if (this.launchingBrowser) return;
+    this.launchingBrowser = true;
     const http = require("http");
     const req = http.get("http://127.0.0.1:9222/json/version", (res) => {
       // Connected successfully, browser is already running
+      this.launchingBrowser = false;
     });
     req.on("error", () => {
       // Not running, launch it in background
@@ -189,12 +223,16 @@ class DeepSeekWebBrain extends BaseBrain {
         userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
       }
 
+      const isCompiled = __dirname.split(path.sep).includes("dist");
+      const projectRoot = isCompiled
+        ? path.resolve(__dirname, "../../../../")
+        : path.resolve(__dirname, "../../../");
       const child = spawn(
         "chromium",
         [
           // "--headless=new",
           "--remote-debugging-port=9222",
-          "--user-data-dir=" + path.join(os.homedir(), "scraper-profile"),
+          "--user-data-dir=" + path.join(projectRoot, "scraper-profile"),
           `--user-agent=${userAgent}`,
         ],
         {
@@ -203,8 +241,11 @@ class DeepSeekWebBrain extends BaseBrain {
         }
       );
       child.unref();
+      setTimeout(() => {
+        this.launchingBrowser = false;
+      }, 5000);
     });
-    req.setTimeout(500, () => {
+    req.setTimeout(1000, () => {
       req.destroy();
     });
   }
@@ -245,12 +286,10 @@ class DeepSeekWebBrain extends BaseBrain {
     }
     if (this.initializing) return this.initializing;
     this.initializing = (async () => {
-      await this.waitForCDP();
-      const browser = await chromium.connectOverCDP("http://127.0.0.1:9222");
-      const ctx = browser.contexts()[0];
-      let page = ctx.pages().find((p) => p.url().includes("chat.deepseek.com"));
+      await this.getBrowserConnection();
+      let page = this.context.pages().find((p) => p.url().includes("chat.deepseek.com"));
       if (!page) {
-        page = await ctx.newPage();
+        page = await this.context.newPage();
         await this.setupInterceptors(page);
         page.goto("https://chat.deepseek.com/").catch(() => {});
       } else {

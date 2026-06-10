@@ -1,12 +1,12 @@
 // @ts-nocheck
 // Persistent project memory. Read from and appended to ./AGENTS.md
-// (and ~/.deepseek_cli/AGENTS.md for global). The orchestrator injects
+// (and ~/.ds_config/AGENTS.md for global). The orchestrator injects
 // these on every system-prompt build.
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const PROJECT_FILE = path.join(process.cwd(), 'AGENTS.md');
-const GLOBAL_FILE = path.join(os.homedir(), '.deepseek_cli', 'AGENTS.md');
+const GLOBAL_FILE = path.join(os.homedir(), '.ds_config', 'AGENTS.md');
 function readMd(file) {
     try {
         if (!fs.existsSync(file))
@@ -35,13 +35,13 @@ function buildMemoryContext() {
 }
 module.exports = {
     name: "update_project_memory",
-    description: "Add to or update the persistent AGENTS.md memory file. There are two scopes: 'project' (./AGENTS.md, shared with anyone working on this project) and 'global' (~/.deepseek_cli/AGENTS.md, applies to all your sessions). The memory is automatically loaded into every system prompt. Use this to remember: project conventions, user preferences, build/test commands, common pitfalls, architecture decisions.",
+    description: "Add to or update the persistent AGENTS.md memory file. There are two scopes: 'project' (./AGENTS.md, shared with anyone working on this project) and 'global' (~/.ds_config/AGENTS.md, applies to all your sessions). The memory is automatically loaded into every system prompt. Use this to remember: project conventions, user preferences, build/test commands, common pitfalls, architecture decisions.",
     parameters: {
         type: "object",
         properties: {
             section: { type: "string", description: "Markdown section heading (e.g. '## Build commands', '## Architecture', '## User preferences'). If the section exists, the content is appended; if not, a new section is created." },
             content: { type: "string", description: "The content to add under this section. Can be multiple lines / a markdown list / etc." },
-            scope: { type: "string", description: "'project' (./AGENTS.md, default) or 'global' (~/.deepseek_cli/AGENTS.md)." },
+            scope: { type: "string", description: "'project' (./AGENTS.md, default) or 'global' (~/.ds_config/AGENTS.md)." },
             action: { type: "string", description: "'append' (default) adds to the section, 'replace' overwrites the whole section, 'delete' removes the section." }
         },
         "required": ["section", "content"]

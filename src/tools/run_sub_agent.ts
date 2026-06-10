@@ -17,7 +17,19 @@ const SUB_AGENT_REMINDER = `\n\n[Reminder: You MUST respond in English only. You
   `JSON Format (Single):\n{"tool": "tool_name", "param1": "val"}\n` +
   `JSON Format (Parallel):\n{"tools": [{"name": "t1", "p1": "v1"}, {"name": "t2"}]}\n` +
   `CRITICAL: (1) NEVER use placeholder comments (e.g. "// ... rest of code"). Complete code only. (2) Review unified line diffs returned in tool outputs. (3) Verification checks (syntax/imports/tests) run automatically before completion. Ensure no errors are introduced.\n` +
-  `LANGUAGE: English only. Never respond in Chinese or any other language.]`;
+  `LANGUAGE: English only. Never respond in Chinese or any other non-English language.]\n` +
+  `[SUB-AGENT RULES (in addition to system prompt)]:\n` +
+  `1. STAY IN SCOPE. Do exactly what the main agent's prompt said. If you discover the work is larger, STOP and report back instead of silently expanding scope.\n` +
+  `2. NO run_sub_agent. You cannot dispatch further sub-agents. Return a plain-text report to the main agent instead.\n` +
+  `3. NO writing to ~/.ds_config/sessions/ or other global state. Scratch/ and backups/ in your sub-agent dir are yours; nothing else.\n` +
+  `4. SELF-TEST MANDATORY. Your final response MUST end with one of:\n` +
+  `     PASS  Self-test: <cmd> -> <result>\n` +
+  `     PASS  Self-test skipped: <reason>\n` +
+  `     FAIL  Self-test: <output>\n` +
+  `   If you don't include it, the orchestrator rejects your work and forces you to retry.\n` +
+  `5. SCRATCH PERSISTENCE. Your scratch/ directory is DELETED when you finish. Anything you want the main agent to see must be in your final response text, not just in scratch.\n` +
+  `6. USE the think tool (scratch/thinking.md) for non-trivial reasoning. Use update_task to track multi-step work. Use ask_user ONLY if the prompt is genuinely unsolvable without input.\n` +
+  `7. NO STALLING PHRASES. Do not start with "Let me think..." or "I will now...". Either call a tool or write your final answer.`;
 
 function isValidToolCall(normalized) {
   if (!normalized || typeof normalized !== "object") return false;
@@ -207,18 +219,22 @@ module.exports = {
         type: "integer",
         description: "The unique sequential number/ID for this sub-agent instance (e.g. 1, 2, 3)."
       },
+      model: {
+        type: "string",
+        description: "The name of the specific LLM model/agent type to run (e.g. 'deepseek', 'qwen', 'gemini')."
+      },
       name: {
         type: "string",
-        description: "The name of the specific LLM model/agent type to run (e.g. 'deepseek', 'qwen', 'gemini'). This is now mandatory."
+        description: "Deprecated. Use 'model' instead."
       },
       prompt: {
         type: "string",
         description: "The micro-step instruction task description for the sub-agent. High-level rules are auto-injected."
       }
     },
-    required: ["agentNumber", "name", "prompt"]
+    required: ["agentNumber", "prompt"]
   },
-  async execute({ agentNumber, name = "deepseek", prompt }) {
+  async execute({ agentNumber, model, name, prompt }) {
     const brain = brainRegistry.getActiveBrain();
     if (!brain) {
       return "Error: No active brain found to run sub-agent.";
@@ -244,7 +260,8 @@ module.exports = {
     }
 
     // Setup sub-agent workspace folder
-    const subAgentBaseDir = path.join(process.cwd(), "ds_config", "sub_agents", String(agentNumber));
+    const { DS_CONFIG_DIR } = require("../utils/config");
+    const subAgentBaseDir = path.join(DS_CONFIG_DIR, "sub_agents", String(agentNumber));
     const subAgentDir = path.join(subAgentBaseDir, "ds_config");
     if (!fs.existsSync(subAgentDir)) {
       fs.mkdirSync(subAgentDir, { recursive: true });
@@ -258,7 +275,7 @@ module.exports = {
       fs.mkdirSync(scratchDir, { recursive: true });
     }
 
-    const agentName = String(name || "deepseek").toLowerCase();
+    const agentName = String(model || name || "deepseek").toLowerCase();
     if (!agentQueues[agentName]) {
       agentQueues[agentName] = Promise.resolve();
     }

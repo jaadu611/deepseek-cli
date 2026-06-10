@@ -2,7 +2,9 @@
 const fs = require('fs');
 const path = require('path');
 
-const CONFIG_PATH = path.join(__dirname, 'mcp.json');
+const CONFIG_PATH = fs.existsSync(path.join(__dirname, 'mcp.json'))
+  ? path.join(__dirname, 'mcp.json')
+  : path.resolve(__dirname, '../../../src/mcp/mcp.json');
 let clients = {}; // serverName -> Client instance
 let transports = {}; // serverName -> Transport instance
 let toolRegistry = []; // Flat list of { server, name, description, inputSchema }

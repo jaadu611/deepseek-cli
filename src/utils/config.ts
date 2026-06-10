@@ -6,7 +6,7 @@ const { AsyncLocalStorage } = require('async_hooks');
 
 const subAgentStorage = new AsyncLocalStorage();
 
-const DS_CONFIG_DIR = path.join(os.homedir(), '.deepseek_cli', 'ds_config');
+const DS_CONFIG_DIR = path.join(os.homedir(), '.ds_config');
 const CONFIG_PATH = path.join(DS_CONFIG_DIR, 'config.json');
 
 
@@ -91,14 +91,33 @@ function getSessionsPath() {
   return sessionsDir;
 }
 
+function getScratchPath() {
+  // Sub-agents get an isolated scratch dir; main agent gets the shared one.
+  const store = subAgentStorage.getStore();
+  if (store && store.subAgentDir) {
+    const sd = path.join(store.subAgentDir, 'scratch');
+    if (!fs.existsSync(sd)) fs.mkdirSync(sd, { recursive: true });
+    return sd;
+  }
+  ensureConfigDir();
+  let scratchDir = path.join(DS_CONFIG_DIR, 'scratch');
+  const sid = global.currentSessionId;
+  if (sid) {
+    scratchDir = path.join(scratchDir, sid);
+  }
+  if (!fs.existsSync(scratchDir)) fs.mkdirSync(scratchDir, { recursive: true });
+  return scratchDir;
+}
+
 module.exports = {
   ensureConfigDir,
   loadConfig,
   saveConfig,
   getBackupsPath,
   getSessionsPath,
+  getScratchPath,
   DS_CONFIG_DIR,
   CONFIG_PATH,
   subAgentStorage,
-  resolveSubAgentPath
+  resolveSubAgentPath,
 };

@@ -1,0 +1,1679 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+      --deepseek-blue: #4d6bfe;
+      --deepseek-blue-hover: #3b58d6;
+      --deepseek-blue-transparent: #4d6bfe22;
+    }
+
+    /* Hide scrollbars globally for cleaner UI */
+    ::-webkit-scrollbar {
+      display: none !important;
+    }
+    * {
+      scrollbar-width: none !important;
+      -ms-overflow-style: none !important;
+    }
+
+    body {
+      background-color: var(--vscode-sideBar-background, #1e1e1e);
+      color: var(--vscode-sideBar-foreground, #cccccc);
+      font-family: var(--font-family);
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;
+      box-sizing: border-box;
+    }
+
+    /* Header styling */
+    .header {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--vscode-sideBar-border, #2b2b2b);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background-color: var(--vscode-sideBar-background, #1e1e1e);
+      z-index: 10;
+    }
+
+    .title {
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--vscode-sideBar-foreground, #cccccc);
+      margin: 0;
+    }
+
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .custom-dropdown {
+      position: relative;
+      font-size: 11px;
+      user-select: none;
+      outline: none;
+    }
+    
+    .custom-dropdown-selected {
+      background-color: var(--vscode-dropdown-background, #333333);
+      color: var(--vscode-dropdown-foreground, #f0f0f0);
+      border: 1px solid var(--vscode-dropdown-border, #454545);
+      padding: 2px 6px;
+      border-radius: 4px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: background-color 0.1s, border-color 0.1s;
+    }
+    
+    .custom-dropdown-selected:hover {
+      background-color: var(--vscode-list-hoverBackground, #2a2d2e);
+      border-color: var(--vscode-focusBorder, #4d6bfe);
+    }
+    
+    .custom-dropdown-menu {
+      position: absolute;
+      top: 100%;
+      right: 0;
+      margin-top: 4px;
+      background-color: var(--vscode-editorWidget-background, #252526);
+      border: 1px solid var(--vscode-editorWidget-border, #454545);
+      border-radius: 2px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+      min-width: 90px;
+      z-index: 100;
+      display: flex;
+      flex-direction: column;
+      padding: 4px 0;
+    }
+    
+    .custom-dropdown-item {
+      padding: 4px 10px;
+      cursor: pointer;
+      color: var(--vscode-editorWidget-foreground, #cccccc);
+    }
+    
+    .custom-dropdown-item:hover, .custom-dropdown-item.active {
+      background-color: var(--deepseek-blue);
+      color: var(--vscode-list-activeSelectionForeground, #ffffff);
+    }
+
+    .icon-btn {
+      background: none;
+      border: 1px solid var(--vscode-sideBar-border, #454545);
+      color: var(--vscode-sideBar-foreground, #cccccc);
+      cursor: pointer;
+      padding: 3px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 4px;
+      outline: none;
+    }
+
+    .icon-btn:hover {
+      background-color: var(--vscode-list-hoverBackground, #2a2d2e);
+      border-color: var(--deepseek-blue);
+      color: var(--vscode-sideBar-foreground, #ffffff);
+    }
+
+    /* Chat Messages Container */
+    .messages-container {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      scroll-behavior: smooth;
+    }
+
+    .message {
+      display: flex;
+      flex-direction: column;
+      max-width: 90%;
+      word-wrap: break-word;
+      font-size: 12px;
+      line-height: 1.4;
+    }
+
+    .message.user {
+      position: relative;
+      align-self: flex-end;
+      background-color: var(--deepseek-blue-transparent);
+      padding: 6px 10px;
+      border-radius: 8px 8px 0px 8px;
+      color: var(--vscode-sideBar-foreground, #eeeeee);
+    }
+
+    .message.ai {
+      align-self: flex-start;
+      padding: 2px 0;
+      width: 100%;
+      max-width: 100%;
+    }
+
+    .ai-header {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 2px;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--vscode-sideBar-foreground, #858585);
+    }
+
+    .ai-content {
+      color: var(--vscode-sideBar-foreground, #cccccc);
+    }
+
+    .ai-content h1, .ai-content h2, .ai-content h3 {
+      margin: 4px 0 2px 0;
+    }
+    .ai-content p {
+      margin: 2px 0;
+    }
+    .ai-content ul, .ai-content ol {
+      margin: 2px 0;
+      padding-left: 16px;
+    }
+    .ai-content li {
+      margin: 1px 0;
+    }
+
+    /* Thinking Details */
+    .thinking-box {
+      margin-bottom: 4px;
+      border-left: 2px solid var(--vscode-textSeparator-foreground, #424242);
+      padding-left: 10px;
+    }
+
+    .thinking-header {
+      font-size: 11px;
+      color: var(--vscode-descriptionForeground, #858585);
+      cursor: pointer;
+      user-select: none;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .chevron {
+      transition: transform 0.2s ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .chevron.collapsed {
+      transform: rotate(-90deg);
+    }
+
+    .thinking-content {
+      font-size: 12px;
+      color: var(--vscode-descriptionForeground, #a0a0a0);
+      margin-top: 2px;
+      white-space: pre-wrap;
+    }
+
+    /* Markdown Elements */
+    pre.code-block {
+      background-color: var(--vscode-textCodeBlock-background, #2d2d2d);
+      border: 1px solid var(--vscode-sideBar-border, #2b2b2b);
+      border-radius: 4px;
+      padding: 6px;
+      overflow-x: auto;
+      margin: 6px 0;
+    }
+
+    code {
+      font-family: 'Courier New', Courier, monospace;
+      font-size: 11px;
+    }
+
+    .inline-code {
+      background-color: var(--vscode-textCodeBlock-background, #2d2d2d);
+      padding: 1px 4px;
+      border-radius: 3px;
+    }
+
+    /* Checkpoint Card */
+    .checkpoint-card {
+      align-self: center;
+      font-size: 11px;
+      color: var(--vscode-descriptionForeground, #858585);
+      border: 1px solid var(--vscode-sideBar-border, #2b2b2b);
+      border-left: 2px solid var(--vscode-textSeparator-foreground, #424242);
+      background-color: var(--vscode-textCodeBlock-background, #2d2d2d);
+      border-radius: 4px;
+      padding: 4px 8px;
+      margin: 2px 0;
+      width: 100%;
+      box-sizing: border-box;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      cursor: pointer;
+    }
+
+    .checkpoint-card:hover {
+      background-color: var(--vscode-list-hoverBackground, #2a2d2e);
+    }
+
+    .checkpoint-title {
+      font-weight: 500;
+      color: var(--vscode-descriptionForeground, #858585);
+    }
+
+    .revert-badge {
+      font-size: 10px;
+      background-color: var(--vscode-button-secondaryBackground, #303030);
+      color: var(--vscode-descriptionForeground, #858585);
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-weight: 500;
+    }
+
+    .revert-badge:hover {
+      background-color: var(--deepseek-blue);
+      color: #ffffff;
+    }
+
+    /* Beautiful Code Block Containers */
+    .code-block-container {
+      margin: 6px 0;
+      border: 1px solid var(--vscode-sideBar-border, #2b2b2b);
+      border-radius: 6px;
+      overflow: hidden;
+      background-color: var(--vscode-textCodeBlock-background, #1e1e1e);
+    }
+
+    .code-block-header {
+      background-color: var(--vscode-sideBar-background, #252526);
+      padding: 4px 8px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid var(--vscode-sideBar-border, #2b2b2b);
+    }
+
+    .code-block-lang {
+      font-size: 10px;
+      font-family: monospace;
+      text-transform: uppercase;
+      color: var(--vscode-descriptionForeground, #858585);
+      font-weight: 600;
+    }
+
+    .code-block-copy-btn {
+      background: none;
+      border: none;
+      color: var(--vscode-descriptionForeground, #858585);
+      cursor: pointer;
+      font-size: 10px;
+      padding: 2px 6px;
+      border-radius: 3px;
+    }
+
+    .code-block-copy-btn:hover {
+      color: var(--vscode-foreground, #ffffff);
+      background-color: rgba(255, 255, 255, 0.1);
+    }
+
+    pre.code-block {
+      margin: 0 !important;
+      border: none !important;
+      border-radius: 0 !important;
+      padding: 8px;
+      overflow-x: auto;
+      background-color: transparent !important;
+    }
+
+    /* User Message actions */
+    .user-actions {
+      position: absolute;
+      top: 100%;
+      right: 0;
+      margin-top: 2px;
+      display: flex;
+      gap: 4px;
+      opacity: 0;
+      transition: opacity 0.2s;
+      pointer-events: none;
+      z-index: 5;
+    }
+
+    .message.user:hover .user-actions {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .action-btn {
+      background: none;
+      border: none;
+      color: var(--vscode-descriptionForeground, #858585);
+      cursor: pointer;
+      padding: 2px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 3px;
+    }
+
+    .action-btn:hover {
+      color: var(--vscode-foreground, #ffffff);
+      background-color: rgba(255, 255, 255, 0.1);
+    }
+
+    /* Tool Call Card */
+    .tool-box {
+      margin-bottom: 4px;
+      border-left: 2px solid var(--vscode-textSeparator-foreground, #424242);
+      padding-left: 10px;
+    }
+
+    .tool-header {
+      font-size: 11px;
+      color: var(--vscode-descriptionForeground, #858585);
+      cursor: pointer;
+      user-select: none;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .tool-content {
+      font-size: 11px;
+      color: var(--vscode-descriptionForeground, #a0a0a0);
+      margin-top: 2px;
+      white-space: pre-wrap;
+      font-family: var(--vscode-editor-font-family, monospace);
+      background-color: var(--vscode-textCodeBlock-background, #2d2d2d);
+      padding: 4px 6px;
+      border-radius: 4px;
+      border: 1px solid var(--vscode-sideBar-border, #2b2b2b);
+    }
+
+    .tool-spinner {
+      border: 2px solid transparent;
+      border-top-color: var(--deepseek-blue);
+      border-radius: 50%;
+      width: 10px;
+      height: 10px;
+      animation: spin 0.8s linear infinite;
+      will-change: transform;
+    }
+
+    /* Table Styling */
+    .table-container {
+      margin: 8px 0;
+      border: 1px solid var(--vscode-sideBar-border, #2b2b2b);
+      border-radius: 6px;
+      overflow-x: auto;
+      background-color: var(--vscode-textCodeBlock-background, #1e1e1e);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+      font-size: 11px;
+      line-height: 1.4;
+    }
+
+    th {
+      font-weight: 600;
+      color: var(--vscode-foreground, #ffffff);
+      background-color: var(--vscode-sideBar-background, #252526);
+      padding: 6px 8px;
+      border-bottom: 2px solid var(--vscode-sideBar-border, #2b2b2b);
+    }
+
+    td {
+      padding: 6px 8px;
+      border-bottom: 1px solid var(--vscode-sideBar-border, #2b2b2b);
+      color: var(--vscode-sideBar-foreground, #cccccc);
+    }
+
+    tr:nth-child(even) {
+      background-color: rgba(255, 255, 255, 0.02);
+    }
+
+    tr:last-child td {
+      border-bottom: none;
+    }
+
+    /* Bottom Input Panel */
+    .input-panel {
+      position: relative;
+      padding: 12px;
+      border-top: 1px solid var(--vscode-sideBar-border, #2b2b2b);
+      background-color: var(--vscode-sideBar-background, #1e1e1e);
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .textarea-wrapper {
+      position: relative;
+      border: 1px solid var(--vscode-input-border, #3c3c3c);
+      border-radius: 6px;
+      background-color: var(--vscode-input-background, #252526);
+      display: flex;
+      flex-direction: row;
+      align-items: flex-end;
+      padding: 4px;
+      box-sizing: border-box;
+    }
+
+    .textarea-wrapper:focus-within {
+      border-color: var(--deepseek-blue);
+    }
+
+    .add-btn {
+      background-color: var(--vscode-button-secondaryBackground, #303030);
+      border: none;
+      color: var(--vscode-descriptionForeground, #858585);
+      padding: 0;
+      margin-bottom: 0;
+      margin-right: 6px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 50%;
+      width: 24px;
+      height: 24px;
+      flex-shrink: 0;
+      box-sizing: border-box;
+    }
+
+    .add-btn:hover {
+      color: var(--vscode-foreground, #ffffff);
+      background-color: var(--vscode-button-secondaryHoverBackground, #404040);
+    }
+
+    textarea::-webkit-scrollbar {
+      display: none;
+    }
+
+    textarea {
+      flex: 1;
+      background: transparent;
+      color: var(--vscode-input-foreground, #cccccc);
+      border: none;
+      resize: none;
+      padding: 4px 0;
+      margin: 0;
+      font-family: var(--font-family);
+      font-size: 12px;
+      line-height: 16px;
+      outline: none;
+      height: 24px;
+      max-height: 120px;
+      overflow-y: auto;
+      box-sizing: border-box;
+      -ms-overflow-style: none;
+      scrollbar-width: none;
+    }
+
+    .send-btn {
+      background-color: var(--deepseek-blue);
+      color: var(--vscode-button-foreground, #ffffff);
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      width: 24px;
+      height: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      outline: none;
+      margin-bottom: 0;
+      margin-left: 6px;
+      flex-shrink: 0;
+      box-sizing: border-box;
+    }
+
+    /* Slash Menu */
+    .slash-menu {
+      position: absolute;
+      bottom: 100%;
+      left: 12px;
+      right: 12px;
+      margin-bottom: 6px;
+      background-color: var(--vscode-editorWidget-background, #252526);
+      border: 1px solid var(--vscode-editorWidget-border, #454545);
+      border-radius: 6px;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+      max-height: 180px;
+      overflow-y: auto;
+      z-index: 1000;
+      padding: 4px;
+    }
+    
+    .slash-item {
+      padding: 6px 10px;
+      margin-bottom: 2px;
+      border-radius: 4px;
+      font-size: 12px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--vscode-editorWidget-foreground, #cccccc);
+      border: 1px solid transparent;
+      transition: background-color 0.1s, border-color 0.1s;
+    }
+    
+    .slash-item.active, .slash-item:hover {
+      background-color: var(--vscode-list-hoverBackground, rgba(90, 93, 94, 0.31));
+      border: 1px solid var(--deepseek-blue);
+      color: var(--vscode-editorWidget-foreground, #ffffff);
+    }
+    
+    .slash-item-desc {
+      color: var(--vscode-descriptionForeground, #858585);
+      font-size: 11px;
+      margin-left: auto;
+    }
+    
+    .slash-item.active .slash-item-desc, .slash-item:hover .slash-item-desc {
+      color: var(--vscode-editorWidget-foreground, #ffffff);
+      opacity: 0.9;
+    }
+
+    .send-btn:hover {
+      background-color: var(--deepseek-blue-hover);
+    }
+
+    .send-btn:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+
+    /* Ask User Overlay Modal */
+    .modal-overlay {
+      position: absolute;
+      bottom: 100%;
+      left: 12px;
+      right: 12px;
+      margin-bottom: 6px;
+      background-color: var(--vscode-editorWidget-background, #252526);
+      border: 1px solid var(--deepseek-blue);
+      border-radius: 6px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+      z-index: 100;
+      padding: 10px;
+      box-sizing: border-box;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .modal-title {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--vscode-sideBar-foreground, #ffffff);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      text-transform: uppercase;
+    }
+
+    .modal-context {
+      font-size: 11px;
+      color: var(--vscode-descriptionForeground, #858585);
+      background-color: var(--vscode-textBlockQuote-background, #252526);
+      padding: 6px 8px;
+      border-radius: 4px;
+      border: 1px solid var(--vscode-sideBar-border, #2b2b2b);
+    }
+
+    .modal-question {
+      font-size: 12px;
+      color: var(--vscode-sideBar-foreground, #cccccc);
+      font-weight: 500;
+    }
+
+    .modal-options {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .option-label {
+      font-size: 12px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      cursor: pointer;
+      color: var(--vscode-sideBar-foreground, #cccccc);
+    }
+
+    .modal-text-input {
+      background-color: var(--vscode-input-background, #252526);
+      color: var(--vscode-input-foreground, #cccccc);
+      border: 1px solid var(--vscode-input-border, #3c3c3c);
+      padding: 6px;
+      font-size: 12px;
+      border-radius: 3px;
+      outline: none;
+      width: 100%;
+      box-sizing: border-box;
+    }
+
+    .modal-text-input:focus {
+      border-color: var(--deepseek-blue);
+    }
+
+    .modal-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      margin-top: 4px;
+    }
+
+    .primary-btn {
+      background-color: var(--deepseek-blue);
+      color: var(--vscode-button-foreground, #ffffff);
+      border: none;
+      padding: 6px 12px;
+      font-size: 11px;
+      font-weight: 500;
+      border-radius: 3px;
+      cursor: pointer;
+      outline: none;
+    }
+
+    .primary-btn:hover {
+      background-color: var(--deepseek-blue-hover);
+    }
+
+    /* History Sidebar Overlay */
+    .history-panel {
+      position: absolute;
+      top: 37px; /* directly below header */
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: var(--vscode-sideBar-background, #1e1e1e);
+      border-top: 1px solid var(--vscode-sideBar-border, #2b2b2b);
+      z-index: 50;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .history-header {
+      padding: 8px 12px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      color: var(--vscode-descriptionForeground, #858585);
+      border-bottom: 1px solid var(--vscode-sideBar-border, #2b2b2b);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .history-list {
+      flex: 1;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .history-item {
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--vscode-sideBar-border, #2b2b2b);
+      cursor: pointer;
+      display: flex;
+      flex-direction: row;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .history-item-content {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      overflow: hidden;
+    }
+
+    .history-item:hover {
+      background-color: var(--vscode-list-hoverBackground, #2a2d2e);
+    }
+    
+    .history-delete-btn {
+      background: none;
+      border: none;
+      color: var(--vscode-descriptionForeground, #858585);
+      cursor: pointer;
+      padding: 4px;
+      border-radius: 3px;
+      display: none;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .history-item:hover .history-delete-btn {
+      display: flex;
+    }
+
+    .history-delete-btn:hover {
+      background-color: rgba(255, 50, 50, 0.2);
+      color: #ff5555;
+    }
+
+    .history-item-title {
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--vscode-sideBar-foreground, #cccccc);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .history-item-date {
+      font-size: 10px;
+      color: var(--vscode-descriptionForeground, #858585);
+    }
+
+    @keyframes spin {
+      from { transform: rotate(0deg) translateZ(0); }
+      to { transform: rotate(360deg) translateZ(0); }
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    /* Budget Display */
+    .budget-container {
+      padding: 4px 12px;
+      border-bottom: 1px solid var(--vscode-sideBar-border, #2b2b2b);
+      background-color: var(--vscode-sideBar-background, #1e1e1e);
+      display: flex;
+      flex-direction: row;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .budget-info {
+      font-size: 9px;
+      color: var(--vscode-descriptionForeground, #858585);
+      white-space: nowrap;
+    }
+
+    .budget-bar {
+      height: 4px;
+      background-color: var(--deepseek-blue-transparent);
+      border-radius: 2px;
+      overflow: hidden;
+      flex: 1;
+    }
+
+    .budget-progress {
+      height: 100%;
+      background-color: var(--deepseek-blue);
+      transition: width 0.3s ease, background-color 0.3s ease;
+      width: 0%;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Header -->
+  <div class="header">
+    <div class="title" style="display:flex; align-items:center; gap:6px;">
+      <img src="{{logoUri}}" width="16" height="16" alt="Logo" style="flex-shrink:0;">
+      DeepSeek
+    </div>
+    <div class="header-actions">
+      <div class="custom-dropdown" id="modeDropdownWrapper" tabindex="0">
+        <div class="custom-dropdown-selected" onclick="toggleModeMenu()">
+          <span id="currentModeDisplay">Act Mode</span>
+          <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M4.2 6L8 10.2 11.8 6H4.2z"/>
+          </svg>
+        </div>
+        <div class="custom-dropdown-menu hidden" id="modeMenu">
+          <div class="custom-dropdown-item active" onclick="selectMode('act')">Act Mode</div>
+          <div class="custom-dropdown-item" onclick="selectMode('plan')">Plan Mode</div>
+          <div class="custom-dropdown-item" onclick="selectMode('auto')">Auto Mode</div>
+        </div>
+      </div>
+      <button id="historyBtn" class="icon-btn" onclick="toggleHistory()" title="View History">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+          <path d="M8.5 2C11.58 2 14 4.42 14 7.5c0 2.85-2.2 5.18-5 5.45v-1.01c2.28-.26 4-2.21 4-4.44C13 5.02 10.98 3 8.5 3c-1.33 0-2.52.58-3.35 1.5L6.5 6H2V1.5l1.83 1.83C4.85 2.37 6.6 2 8.5 2zm-1 3v3h3V7h-2V5h-1z"/>
+        </svg>
+      </button>
+      <button id="newChatBtn" class="icon-btn" onclick="startNewChat()" title="New Chat">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+          <path d="M14 7H9V2H7v5H2v2h5v5h2V9h5z"/>
+        </svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- Budget Display -->
+  <div class="budget-container">
+    <div class="budget-bar">
+      <div id="budgetProgress" class="budget-progress" style="width: 0%"></div>
+    </div>
+    <div class="budget-info">
+      <span id="budgetText">0 / 128k tokens</span>
+    </div>
+  </div>
+
+  <!-- History Panel -->
+  <div id="historyPanel" class="history-panel hidden">
+    <div class="history-header">
+      <span>Chat History</span>
+      <button class="icon-btn" style="width: 20px; height: 20px; padding: 0;" onclick="toggleHistory()">
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
+          <path d="M13.85 3.56l-1.41-1.41L8 6.59 3.56 2.15 2.15 3.56 6.59 8l-4.44 4.44 1.41 1.41L8 9.41l4.44 4.44 1.41-1.41L9.41 8z"/>
+        </svg>
+      </button>
+    </div>
+    <div id="historyList" class="history-list">
+      <!-- Session items inserted here -->
+    </div>
+  </div>
+
+  <!-- Messages Container -->
+  <div id="messages" class="messages-container">
+    <!-- Message items inserted here -->
+  </div>
+
+  <!-- Input Panel -->
+  <div class="input-panel">
+    <div id="slashMenu" class="slash-menu hidden"></div>
+
+    <!-- Ask User Overlay Modal -->
+    <div id="askUserOverlay" class="modal-overlay hidden">
+      <div class="modal-title">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" style="color: var(--deepseek-blue);">
+          <path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0-1A6 6 0 1 0 8 2a6 6 0 0 0 0 12zm0-2.5a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5zm.25-6.5h-1v5h1v-5z"/>
+        </svg>
+        <span>Clarification Needed</span>
+      </div>
+      <div id="askUserContext" class="modal-context hidden"></div>
+      <div id="askUserQuestion" class="modal-question"></div>
+      <div id="askUserOptions" class="modal-options"></div>
+      <input type="text" id="askUserTextInput" class="modal-text-input" placeholder="Type your answer...">
+      <div class="modal-actions" style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px;">
+        <button class="primary-btn" style="background-color: var(--vscode-button-secondaryBackground, #303030); color: var(--vscode-descriptionForeground, #858585);" onclick="skipAskUser()">Skip</button>
+        <button class="primary-btn" onclick="submitAskUser()">Submit</button>
+      </div>
+    </div>
+
+    <div class="textarea-wrapper">
+      <button class="add-btn" title="Attach Context">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+          <path d="M14 7v2H9v5H7V9H2V7h5V2h2v5h5z"/>
+        </svg>
+      </button>
+      <textarea id="promptInput" placeholder="Message..." rows="1" onkeydown="handleKeyDown(event)"></textarea>
+      <button id="sendBtn" class="send-btn" onclick="submitMessage()">
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
+          <path d="M1.01 14l13.92-6L1.01 2v4.86L10.5 8l-9.49 1.14z"/>
+        </svg>
+      </button>
+    </div>
+  </div>
+
+  <script>
+    const vscode = acquireVsCodeApi();
+
+    // Client-side markdown helper
+    function markdownToHtml(text) {
+      if (!text) return "";
+
+      // Escape HTML
+      let html = text
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+
+      const placeholders = {};
+      let placeholderCounter = 0;
+
+      // 1. Code blocks extraction
+      html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (match, lang, code) => {
+        const cleanLang = lang ? lang.trim() : "code";
+        const placeholderId = `__CODE_BLOCK_${placeholderCounter++}__`;
+        placeholders[placeholderId] = `
+          <div class="code-block-container">
+            <div class="code-block-header">
+              <span class="code-block-lang">${cleanLang}</span>
+              <button class="code-block-copy-btn" onclick="navigator.clipboard.writeText(this.closest('.code-block-container').querySelector('code').textContent); this.textContent='Copied!'; setTimeout(() => this.textContent='Copy', 2000)">Copy</button>
+            </div>
+            <pre class="code-block"><code class="language-${cleanLang}">${code.trim()}</code></pre>
+          </div>
+        `;
+        return placeholderId;
+      });
+
+      // Inline formatter for table cells & general text
+      function formatInline(str) {
+        let val = str;
+        // Inline code
+        val = val.replace(/`([^`\n]+)`/g, '<code class="inline-code">$1</code>');
+        // Bold
+        val = val.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+        // Italic
+        val = val.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+        return val;
+      }
+
+      // 2. Table parsing
+      const lines = html.split("\n");
+      let inTable = false;
+      let tableRows = [];
+      const newLines = [];
+
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const trimmed = line.trim();
+        const isTableRow = trimmed.startsWith("|") && trimmed.endsWith("|");
+
+        if (isTableRow) {
+          if (!inTable) {
+            inTable = true;
+            tableRows = [];
+          }
+          tableRows.push(trimmed);
+        } else {
+          if (inTable) {
+            const placeholderId = `__TABLE_${placeholderCounter++}__`;
+            placeholders[placeholderId] = renderTable(tableRows);
+            newLines.push(placeholderId);
+            inTable = false;
+          }
+          newLines.push(line);
+        }
+      }
+      if (inTable) {
+        const placeholderId = `__TABLE_${placeholderCounter++}__`;
+        placeholders[placeholderId] = renderTable(tableRows);
+        newLines.push(placeholderId);
+      }
+
+      html = newLines.join("\n");
+
+      function renderTable(rows) {
+        if (rows.length < 2) return rows.join("\n");
+        const separatorRow = rows[1];
+        const isSeparator = /^\|[\s-:|]*\|$/.test(separatorRow);
+        if (!isSeparator) return rows.join("\n");
+
+        const headerCells = rows[0].split("|").slice(1, -1).map(c => c.trim());
+        let tHtml = '<div class="table-container"><table><thead><tr>';
+        headerCells.forEach(cell => {
+          tHtml += `<th>${formatInline(cell)}</th>`;
+        });
+        tHtml += '</tr></thead><tbody>';
+
+        for (let i = 2; i < rows.length; i++) {
+          const bodyCells = rows[i].split("|").slice(1, -1).map(c => c.trim());
+          tHtml += '<tr>';
+          for (let j = 0; j < headerCells.length; j++) {
+            const cellVal = bodyCells[j] !== undefined ? bodyCells[j] : "";
+            tHtml += `<td>${formatInline(cellVal)}</td>`;
+          }
+          tHtml += '</tr>';
+        }
+        tHtml += '</tbody></table></div>';
+        return tHtml;
+      }
+
+      // 3. Headings
+      html = html.replace(/^### (.*$)/gim, '<h3>$1</h3>');
+      html = html.replace(/^## (.*$)/gim, '<h2>$1</h2>');
+      html = html.replace(/^# (.*$)/gim, '<h1>$1</h1>');
+
+      // 4. Lists
+      html = html.replace(/^\s*[-*+]\s+(.*$)/gim, '<ul><li>$1</li></ul>');
+      html = html.replace(/<\/ul>\s*<ul>/g, '');
+
+      // 5. General inline markdown
+      html = formatInline(html);
+
+      // 6. Paragraphs
+      html = html.replace(/\n\n/g, '<br/>');
+
+      // 7. Restore placeholders
+      Object.keys(placeholders).forEach(placeholderId => {
+        html = html.replace(placeholderId, placeholders[placeholderId]);
+      });
+
+      return html;
+    }
+
+    // Toggle Chat History panel
+    function toggleHistory() {
+      const panel = document.getElementById("historyPanel");
+      panel.classList.toggle("hidden");
+      if (!panel.classList.contains("hidden")) {
+        vscode.postMessage({ command: "getHistory" });
+      }
+    }
+
+    // New Chat Action
+    function startNewChat() {
+      vscode.postMessage({ command: "newChat" });
+    }
+
+    // Custom Dropdown Logic
+    function toggleModeMenu() {
+      const menu = document.getElementById("modeMenu");
+      menu.classList.toggle("hidden");
+    }
+
+    function selectMode(mode) {
+      let display = "Act Mode";
+      if (mode === "plan") display = "Plan Mode";
+      if (mode === "auto") display = "Auto Mode";
+      
+      document.getElementById("currentModeDisplay").textContent = display;
+      
+      const items = document.querySelectorAll(".custom-dropdown-item");
+      items.forEach(el => {
+        el.classList.remove("active");
+        if (el.textContent === display) el.classList.add("active");
+      });
+      
+      document.getElementById("modeMenu").classList.add("hidden");
+      vscode.postMessage({ command: "changeMode", mode: mode });
+    }
+
+    document.addEventListener("click", (e) => {
+      const wrapper = document.getElementById("modeDropdownWrapper");
+      if (wrapper && !wrapper.contains(e.target)) {
+        document.getElementById("modeMenu").classList.add("hidden");
+      }
+    });
+
+    // Revert Checkpoint Action
+    function revertToCheckpoint(cpId) {
+      vscode.postMessage({ command: "revertCheckpoint", cpId: cpId });
+    }
+
+    // Handle Textarea height auto-growing and slash commands
+    const tx = document.getElementById("promptInput");
+    
+    const SLASH_COMMANDS = [
+      { cmd: "/compact", desc: "Compact current session" },
+      { cmd: "/list-workflows", desc: "List installed workflows" },
+      { cmd: "/install-workflow", desc: "Install workflow from URL" },
+      { cmd: "/install-mcp", desc: "Install an MCP server via npx" },
+      { cmd: "/clear", desc: "Clear current session" }
+    ];
+
+    let slashMenuVisible = false;
+    let slashMenuIndex = 0;
+    let filteredCommands = [];
+
+    function updateSlashMenu() {
+      const val = tx.value;
+      const menu = document.getElementById("slashMenu");
+      
+      if (!val.startsWith("/")) {
+        menu.classList.add("hidden");
+        slashMenuVisible = false;
+        return;
+      }
+      
+      const query = val.toLowerCase();
+      filteredCommands = SLASH_COMMANDS.filter(c => c.cmd.startsWith(query));
+      
+      if (filteredCommands.length === 0) {
+        menu.classList.add("hidden");
+        slashMenuVisible = false;
+        return;
+      }
+      
+      slashMenuVisible = true;
+      if (slashMenuIndex >= filteredCommands.length) {
+        slashMenuIndex = 0;
+      }
+      
+      menu.innerHTML = "";
+      filteredCommands.forEach((c, idx) => {
+        const el = document.createElement("div");
+        el.className = `slash-item ${idx === slashMenuIndex ? 'active' : ''}`;
+        el.innerHTML = `<span style="font-weight: 500;">${c.cmd}</span> <span class="slash-item-desc">${c.desc}</span>`;
+        el.onmousedown = (e) => {
+          e.preventDefault(); // prevent losing focus
+          selectSlashCommand(c);
+        };
+        menu.appendChild(el);
+      });
+      menu.classList.remove("hidden");
+    }
+
+    function selectSlashCommand(c) {
+      if (["/clear", "/compact", "/list-workflows"].includes(c.cmd)) {
+        tx.value = "";
+        document.getElementById("slashMenu").classList.add("hidden");
+        slashMenuVisible = false;
+        vscode.postMessage({ command: "sendMessage", text: c.cmd });
+      } else {
+        tx.value = c.cmd + " ";
+        updateSlashMenu();
+        tx.focus();
+      }
+    }
+
+    tx.addEventListener("input", function() {
+      this.style.height = "auto";
+      this.style.height = this.scrollHeight + "px";
+      updateSlashMenu();
+    });
+
+    function handleKeyDown(e) {
+      if (slashMenuVisible) {
+        if (e.key === "ArrowDown") {
+          e.preventDefault();
+          slashMenuIndex = (slashMenuIndex + 1) % filteredCommands.length;
+          updateSlashMenu();
+          return;
+        } else if (e.key === "ArrowUp") {
+          e.preventDefault();
+          slashMenuIndex = (slashMenuIndex - 1 + filteredCommands.length) % filteredCommands.length;
+          updateSlashMenu();
+          return;
+        } else if (e.key === "Enter") {
+          e.preventDefault();
+          selectSlashCommand(filteredCommands[slashMenuIndex]);
+          return;
+        } else if (e.key === "Escape") {
+          e.preventDefault();
+          document.getElementById("slashMenu").classList.add("hidden");
+          slashMenuVisible = false;
+          return;
+        }
+      }
+
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        submitMessage();
+      }
+    }
+
+    function submitMessage() {
+      const text = tx.value.trim();
+      if (!text) return;
+      tx.value = "";
+      tx.style.height = "auto";
+      vscode.postMessage({ command: "sendMessage", text: text });
+    }
+
+    // Submit Ask User
+    let activeAskUserParams = null;
+    function submitAskUser() {
+      const optionsContainer = document.getElementById("askUserOptions");
+      let val = "";
+      if (optionsContainer.children.length > 0) {
+        const checked = optionsContainer.querySelector('input[type="radio"]:checked');
+        if (checked) {
+          val = checked.value;
+        }
+      }
+      const textInput = document.getElementById("askUserTextInput");
+      const textVal = textInput.value.trim();
+      if (textVal) {
+        val = textVal; // Text override
+      }
+
+      if (!val) return;
+      
+      document.getElementById("askUserOverlay").classList.add("hidden");
+      textInput.value = "";
+      optionsContainer.innerHTML = "";
+      
+      vscode.postMessage({ command: "answerAskUser", text: val });
+    }
+
+    function skipAskUser() {
+      const optionsContainer = document.getElementById("askUserOptions");
+      const textInput = document.getElementById("askUserTextInput");
+      document.getElementById("askUserOverlay").classList.add("hidden");
+      textInput.value = "";
+      optionsContainer.innerHTML = "";
+      vscode.postMessage({ command: "answerAskUser", text: "Skipped by user." });
+    }
+
+    // Listen to messages from VSCode Extension
+    window.addEventListener("message", event => {
+      const message = event.data;
+      switch (message.command) {
+        case "updateLog":
+          renderLogItems(message.logItems);
+          document.getElementById("modeSelect").value = message.currentMode;
+          break;
+        case "setMode":
+          document.getElementById("modeSelect").value = message.mode;
+          break;
+        case "spinner":
+          document.getElementById("sendBtn").disabled = message.active;
+          document.getElementById("promptInput").disabled = message.active;
+          break;
+        case "historyList":
+          renderHistoryList(message.sessions);
+          break;
+        case "showAskUser":
+          showAskUserPopup(message.params);
+          break;
+        case "askConfirmation":
+          showAskConfirmation(message.message);
+          break;
+      }
+    });
+
+    function showAskConfirmation(messageText) {
+      const overlay = document.getElementById("askUserOverlay");
+      const ctxBox = document.getElementById("askUserContext");
+      const qBox = document.getElementById("askUserQuestion");
+      const optionsContainer = document.getElementById("askUserOptions");
+      const textInput = document.getElementById("askUserTextInput");
+
+      qBox.textContent = messageText;
+      ctxBox.classList.add("hidden");
+      textInput.classList.add("hidden");
+
+      optionsContainer.innerHTML = "";
+      
+      const div = document.createElement("div");
+      div.style.display = "flex";
+      div.style.gap = "8px";
+      div.innerHTML = `
+        <button class="primary-btn" onclick="sendConfirmationResponse(true)">Yes</button>
+        <button class="primary-btn" style="background-color: var(--vscode-button-secondaryBackground, #5f6a7d);" onclick="sendConfirmationResponse(false)">No</button>
+      `;
+      optionsContainer.appendChild(div);
+      overlay.classList.remove("hidden");
+    }
+
+    function sendConfirmationResponse(confirmed) {
+      document.getElementById("askUserOverlay").classList.add("hidden");
+      document.getElementById("askUserTextInput").classList.remove("hidden");
+      vscode.postMessage({ command: "askConfirmationResponse", confirmed: confirmed });
+    }
+
+    function showAskUserPopup(params) {
+      activeAskUserParams = params;
+      const overlay = document.getElementById("askUserOverlay");
+      const ctxBox = document.getElementById("askUserContext");
+      const qBox = document.getElementById("askUserQuestion");
+      const optionsContainer = document.getElementById("askUserOptions");
+      const textInput = document.getElementById("askUserTextInput");
+
+      qBox.textContent = params.question;
+      if (params.context) {
+        ctxBox.textContent = params.context;
+        ctxBox.classList.remove("hidden");
+      } else {
+        ctxBox.classList.add("hidden");
+      }
+
+      optionsContainer.innerHTML = "";
+      if (Array.isArray(params.options) && params.options.length > 0) {
+        params.options.forEach((opt, idx) => {
+          const div = document.createElement("div");
+          div.innerHTML = `
+            <label class="option-label">
+              <input type="radio" name="askOption" value="${idx + 1}" ${idx === 0 ? 'checked' : ''}>
+              <span>${idx + 1}. ${opt}</span>
+            </label>
+          `;
+          optionsContainer.appendChild(div);
+        });
+      }
+
+      overlay.classList.remove("hidden");
+      textInput.focus();
+    }
+
+    function renderHistoryList(sessions) {
+      const list = document.getElementById("historyList");
+      list.innerHTML = "";
+      if (!sessions || sessions.length === 0) {
+        list.innerHTML = `<div style="padding: 12px; font-size: 11px; text-align: center; color: var(--vscode-descriptionForeground);">No chat history.</div>`;
+        return;
+      }
+
+      sessions.forEach(s => {
+        const item = document.createElement("div");
+        item.className = "history-item";
+        item.onclick = () => {
+          vscode.postMessage({ command: "selectSession", sessionId: s.id });
+          toggleHistory();
+        };
+
+        const date = new Date(s.updated_at).toLocaleDateString("en-GB", {
+          day: "2-digit",
+          month: "short"
+        });
+
+        item.innerHTML = `
+          <div class="history-item-content">
+            <div class="history-item-title">${s.title}</div>
+            <div class="history-item-date">${date}</div>
+          </div>
+          <button class="history-delete-btn" title="Delete Session" onclick="event.stopPropagation(); vscode.postMessage({ command: 'deleteSession', sessionId: '${s.id}' });">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+              <path d="M11 2H5V1h6v1zM3 4h10v1H3V4zm1 2h8v9H4V6zm2 2v5h1V8H6zm3 0v5h1V8H9z"/>
+            </svg>
+          </button>
+        `;
+        list.appendChild(item);
+      });
+    }
+
+    function renderLogItems(items) {
+      updateBudgetDisplay(items);
+      const container = document.getElementById("messages");
+
+      if (!items || items.length === 0) {
+        container.innerHTML = "";
+        return;
+      }
+
+      // Patch existing children or create new ones
+      items.forEach((item, index) => {
+        let child = container.children[index];
+        if (!child) {
+          child = document.createElement("div");
+          container.appendChild(child);
+        }
+
+        // Handle tool calls
+        if (item.type === "tool") {
+          child.className = "tool-box";
+          
+          const isExecuting = item.status === 'executing';
+          const statusText = isExecuting ? 'Executing...' : 'Completed';
+          const label = `${item.name} (${statusText})`;
+          // The tool calls are open by default keep them close untill i open them
+          const isHidden = 'hidden';
+
+          let displayParams = "";
+          try {
+            displayParams = item.params ? JSON.stringify(item.params, null, 2) : "";
+          } catch(e) {}
+
+          let displayResult = "";
+          if (item.result) {
+            displayResult = typeof item.result === "string" ? item.result : JSON.stringify(item.result, null, 2);
+          }
+
+          const detailContent = `Parameters:\n${displayParams}\n\nResult:\n${displayResult}`;
+
+          let headerDiv = child.querySelector(".tool-header");
+          if (!headerDiv) {
+            headerDiv = document.createElement("div");
+            headerDiv.className = "tool-header";
+            headerDiv.onclick = function() {
+              const contentDiv = this.nextElementSibling;
+              contentDiv.classList.toggle("hidden");
+              this.querySelector(".chevron").classList.toggle("collapsed");
+            };
+            child.appendChild(headerDiv);
+          }
+
+          // Only update header inner HTML if the spinner state/text changed to avoid resetting CSS animation
+          const hasSpinner = !!headerDiv.querySelector(".tool-spinner");
+          if (hasSpinner !== isExecuting || !headerDiv.textContent.includes(item.name)) {
+            headerDiv.innerHTML = `
+              <span class="chevron ${isHidden ? 'collapsed' : ''}">
+                <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor"><path d="M4.2 6L8 10.2 11.8 6H4.2z"/></svg>
+              </span>
+              ${isExecuting ? '<div class="tool-spinner" style="margin-right: 4px; display: inline-block; vertical-align: middle;"></div>' : '<span style="color: #34d399; margin-right: 4px; font-weight: bold;">✓</span>'}
+              <span>${label}</span>
+            `;
+          }
+
+          let contentDiv = child.querySelector(".tool-content");
+          if (!contentDiv) {
+            contentDiv = document.createElement("div");
+            contentDiv.className = `tool-content ${isHidden}`;
+            child.appendChild(contentDiv);
+          }
+
+          if (contentDiv.textContent !== detailContent) {
+            contentDiv.textContent = detailContent;
+          }
+          return;
+        }
+
+        // Handle checkpoint status cards
+        if (item.type === "status" && item.text.includes("[Checkpoint") && item.text.includes("created]")) {
+          const cpId = item.text.match(/Checkpoint\s+([a-zA-Z0-9]+)/)?.[1];
+          if (cpId) {
+            child.className = "checkpoint-card";
+            child.onclick = () => revertToCheckpoint(cpId);
+            child.innerHTML = `
+              <span class="checkpoint-title">Checkpoint Created: ${cpId}</span>
+              <span class="revert-badge">Revert</span>
+            `;
+            return;
+          }
+        }
+
+        // Standard user / ai / error messages
+        if (item.type === "user") {
+          child.className = "message user";
+          
+          const checkpointHtml = item.checkpointId ? `
+            <button class="action-btn revert-btn" title="Revert workspace to this checkpoint" onclick="revertToCheckpoint('${item.checkpointId}')">
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
+                <path d="M12.75 8a4.75 4.75 0 0 1-7.75 3.72l-1.2 1.2A6.25 6.25 0 0 0 14.25 8h1.5l-2.25-3-2.25 3h1.5zm-9.5 0a4.75 4.75 0 0 1 7.75-3.72l1.2-1.2A6.25 6.25 0 0 0 1.75 8h-1.5l2.25 3 2.25-3h-1.5z"/>
+              </svg>
+            </button>
+          ` : '';
+
+          const finalHtml = `
+            <div class="user-text"></div>
+            <div class="user-actions">
+              <button class="action-btn copy-btn" title="Copy Message">
+                <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+                  <rect x="2" y="5" width="9" height="9" rx="1.5"/>
+                  <path d="M5 2h7.5A1.5 1.5 0 0 1 14 3.5V11"/>
+                </svg>
+              </button>
+              ${checkpointHtml}
+            </div>
+          `;
+
+          if (child.querySelector(".user-text")?.textContent !== item.text || !child.querySelector(".user-actions")) {
+            child.innerHTML = finalHtml;
+            child.querySelector(".user-text").textContent = item.text;
+            
+            // Wire up copy button
+            child.querySelector(".copy-btn").onclick = (e) => {
+              e.stopPropagation();
+              navigator.clipboard.writeText(item.text);
+            };
+          }
+        } else if (item.type === "deepseek") {
+          child.className = "message ai";
+
+          let userCollapsed = null;
+          const existingThinkingContent = child.querySelector(".thinking-content");
+          if (existingThinkingContent) {
+            userCollapsed = existingThinkingContent.classList.contains("hidden");
+          }
+
+          let html = "";
+          if (item.thinking) {
+            let parsedThinking = item.thinking;
+            try {
+              if (parsedThinking.trim().startsWith("{")) {
+                const jsonObj = JSON.parse(parsedThinking);
+                if (jsonObj.thought) parsedThinking = jsonObj.thought;
+              }
+            } catch(e) {}
+            parsedThinking = parsedThinking.trim();
+
+            let label = "Thinking Process";
+            if (!item.spinning) {
+               const startT = item._thinkingStartTime;
+               const endT = item._thinkingEndTime || Date.now();
+               const elapsed = startT ? Math.round((endT - startT) / 1000) : 0;
+               if (elapsed > 0) label = `Thought for ${elapsed}s`;
+            } else {
+               label = "Thinking...";
+            }
+            
+            // Close when it starts to answer, when a tool is called, or when generation stops spinning
+            let isHidden = (item.thinking && !item.text && item.spinning) ? '' : 'hidden';
+            if (isHidden === '') {
+              const hasSubsequentTool = items.slice(index + 1).some(sub => sub.type === 'tool');
+              if (hasSubsequentTool) {
+                isHidden = 'hidden';
+              }
+            }
+
+            // Respect user toggle ONLY while it is still actively thinking and hasn't started answering
+            if (item.spinning && !item.text && userCollapsed !== null) {
+              isHidden = userCollapsed ? 'hidden' : '';
+            }
+
+            html += `
+              <div class="thinking-box">
+                <div class="thinking-header" onclick="this.nextElementSibling.classList.toggle('hidden'); this.querySelector('.chevron').classList.toggle('collapsed');">
+                  <span class="chevron ${isHidden ? 'collapsed' : ''}">
+                    <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor"><path d="M4.2 6L8 10.2 11.8 6H4.2z"/></svg>
+                  </span>
+                  <span>${label}</span>
+                </div>
+                <div class="thinking-content ${isHidden}" style="color: var(--vscode-descriptionForeground);">${markdownToHtml(parsedThinking)}</div>
+              </div>
+            `;
+          }
+
+          if (item.text) {
+            html += `<div class="ai-content">${markdownToHtml(item.text)}</div>`;
+          }
+
+          if (item.spinning && !item.thinking && !item.text) {
+             html += `<div class="ai-content" style="margin-top: 6px;"><div class="tool-spinner"></div></div>`;
+          }
+
+          // Determine if we should show the header logo (only once per turn)
+          let showHeader = true;
+          for (let i = index - 1; i >= 0; i--) {
+            if (items[i].type === "user") {
+              break;
+            }
+            if (items[i].type === "deepseek") {
+              showHeader = false;
+              break;
+            }
+          }
+
+          const finalHtml = showHeader ? `
+            <div class="ai-header">
+              <img src="{{logoUri}}" width="14" height="14" alt="Logo" style="flex-shrink:0;"> DeepSeek
+            </div>
+            ${html}
+          ` : html;
+
+          if (child.innerHTML !== finalHtml) {
+            child.innerHTML = finalHtml;
+          }
+        } else if (item.type === "error") {
+          child.className = "message ai";
+          child.innerHTML = `
+            <div class="ai-header" style="color: var(--vscode-errorForeground, #f48771);">✕ Error</div>
+            <div class="ai-content" style="color: var(--vscode-errorForeground, #f48771);">${item.message}</div>
+          `;
+        } else if (item.type === "status" && item.text) {
+          child.className = "message ai";
+          child.innerHTML = `
+            <div class="ai-header">System</div>
+            <div class="ai-content" style="color: var(--vscode-descriptionForeground);">${item.text}</div>
+          `;
+        } else if (item.type === "compact") {
+          child.className = "message ai";
+          child.innerHTML = `
+            <div class="ai-header">Compact</div>
+            <div class="ai-content" style="color: var(--vscode-descriptionForeground);">${item.message}</div>
+          `;
+        }
+      });
+
+      // Remove obsolete nodes
+      while (container.children.length > items.length) {
+        container.removeChild(container.lastChild);
+      }
+
+      // Smart Auto-scroll
+      const isNewMessage = items.length > (container._lastItemsLength || 0);
+      container._lastItemsLength = items.length;
+
+      const isNearBottom = container.scrollHeight - container.clientHeight - container.scrollTop < 60;
+      if (isNearBottom || isNewMessage) {
+        container.scrollTop = container.scrollHeight;
+      }
+    }
+
+    function updateBudgetDisplay(items) {
+      let totalChars = 0;
+      if (Array.isArray(items)) {
+        items.forEach(item => {
+          if (item.type === "user" && item.text) {
+            totalChars += item.text.length;
+          } else if (item.type === "deepseek") {
+            if (item.text) totalChars += item.text.length;
+            if (item.thinking) totalChars += item.thinking.length;
+          } else if (item.type === "tool") {
+            if (item.name) totalChars += item.name.length;
+            if (item.params) totalChars += JSON.stringify(item.params).length;
+            if (item.result) totalChars += String(item.result).length;
+          } else if (item.type === "status" && item.text) {
+            totalChars += item.text.length;
+          } else if (item.type === "compact" && item.message) {
+            totalChars += item.message.length;
+          }
+        });
+      }
+      
+      const tokens = Math.ceil(totalChars / 4);
+      const limit = 128000;
+      const pct = Math.min(100, (tokens / limit) * 100);
+      
+      const textEl = document.getElementById("budgetText");
+      const progEl = document.getElementById("budgetProgress");
+      
+      if (textEl && progEl) {
+        textEl.textContent = `${tokens.toLocaleString()} / 128k tokens`;
+        progEl.style.width = `${pct}%`;
+        
+        if (pct >= 90) {
+          progEl.style.backgroundColor = "var(--vscode-errorForeground, #f48771)";
+        } else if (pct >= 75) {
+          progEl.style.backgroundColor = "#d08000";
+        } else {
+          progEl.style.backgroundColor = "var(--deepseek-blue)";
+        }
+      }
+    }
+  </script>
+</body>
+</html>

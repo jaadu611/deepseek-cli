@@ -19,7 +19,7 @@ function getGitignorePath() {
 }
 
 function initHistory() {
-  // No migration needed; all data now lives in global ~/.deepseek_cli/ds_config
+  // No migration needed; all data now lives in global ~/.ds_config
   if (!fs.existsSync(HISTORY_DIR)) fs.mkdirSync(HISTORY_DIR, { recursive: true });
   if (!fs.existsSync(SESSIONS_DIR)) fs.mkdirSync(SESSIONS_DIR, { recursive: true });
   if (!fs.existsSync(SESSIONS_INDEX)) fs.writeFileSync(SESSIONS_INDEX, '[]', 'utf8');
@@ -78,6 +78,7 @@ function createSession(title = 'New Chat') {
   sessions.unshift(session);
   saveSessions(sessions);
   currentSessionId = id;
+  global.currentSessionId = id;
   return session;
 }
 
@@ -87,6 +88,7 @@ function getCurrentSessionId() {
 
 function setCurrentSessionId(id) {
   currentSessionId = id;
+  global.currentSessionId = id;
 }
 
 function updateSessionDeepseekId(sessionId, dsId) {
@@ -155,6 +157,24 @@ function getFilteredChatHistory(sessionId) {
   return messages.join('\n');
 }
 
+function deleteSession(sessionId) {
+  const sessions = getSessions();
+  const updated = sessions.filter(s => s.id !== sessionId);
+  saveSessions(updated);
+  
+  const file = path.join(SESSIONS_DIR, `${sessionId}.jsonl`);
+  if (fs.existsSync(file)) {
+    try { fs.unlinkSync(file); } catch (e) {}
+  }
+  const scratchDir = path.join(path.dirname(SESSIONS_DIR), 'scratch', sessionId);
+  if (fs.existsSync(scratchDir)) {
+    try {
+      fs.rmSync(scratchDir, { recursive: true, force: true });
+    }
+    catch (e) { }
+  }
+}
+
 module.exports = {
   initHistory,
   getSessions,
@@ -165,5 +185,6 @@ module.exports = {
   updateSessionTitle,
   saveMessage,
   loadSessionMessages,
-  getFilteredChatHistory
+  getFilteredChatHistory,
+  deleteSession
 };
