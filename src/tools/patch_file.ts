@@ -6,7 +6,7 @@ const { getFileDiff } = require('../utils/diff_helper');
 
 module.exports = {
   name: "patch_file",
-  description: "Safely modifies an existing file. PREFERRED METHOD: Use start_line + end_line + new_content for precise edits. FALLBACK: Use find_string + replace_string ONLY for tiny, unique changes. ALWAYS call read_file first to get current line numbers. Creates a backup in ds_config/backups/ automatically.",
+  description: "Safely modifies a single existing file. PREFERRED METHOD: Use find_string + replace_string — context-aware and immune to line-number drift caused by prior edits in the same session. Include enough surrounding lines to make the match unique (the string must appear exactly once). FALLBACK: Use start_line + end_line + new_content only when the target block cannot be uniquely matched by string. CRITICAL: If you need multiple non-contiguous changes to the same file, do NOT call patch_file in parallel. Instead use patch_multiple_files with multiple find_string entries (supports multiple patches to the same file atomically), or call patch_file sequentially one change at a time. Parallel patch_file calls on the same file will be rejected. Creates a backup in ds_config/backups/ automatically.",
   parameters: {
     type: "object",
     properties: {
