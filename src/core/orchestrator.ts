@@ -373,7 +373,7 @@ function verifyNoDeletedReferences(filePath) {
   function getDeclaredMethods(content) {
     const methods = new Set();
     // Class methods: async foo() { or foo() {
-    const classMethodRegex = /^\s*(?:async\s+)?([a-zA-Z0-9_]+)\s*\([^)]*\)\s*\{/gm;
+    const classMethodRegex = /^\s*(?:async\s+)?([a-zA-Z0-9_]+)\s*(?:<[^>]*>)?\s*\([^)]*\)(?:\s*:\s*[^{]+)?\s*\{/gm;
     let match;
     while ((match = classMethodRegex.exec(content)) !== null) {
       const name = match[1];
@@ -381,8 +381,8 @@ function verifyNoDeletedReferences(filePath) {
         methods.add(name);
       }
     }
-    // Function assignments: const foo = () => or let foo = async () =>
-    const funcRegex = /(?:function\s+|const\s+|let\s+|var\s+)([a-zA-Z0-9_]+)\s*=\s*(?:async\s*)?\([^)]*\)\s*=>/g;
+    // Function assignments: const foo =
+    const funcRegex = /(?:const|let|var)\s+([a-zA-Z0-9_]+)\s*=/g;
     while ((match = funcRegex.exec(content)) !== null) {
       methods.add(match[1]);
     }
