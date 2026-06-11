@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
+import { globalPromptQueue } from './queue';
 
 // Import CLI dependencies
 const tui = require('./tui/tui');
@@ -95,9 +96,18 @@ class DeepSeekChatProvider implements vscode.WebviewViewProvider {
     webviewView.webview.onDidReceiveMessage(async (data) => {
       switch (data.command) {
         case 'sendMessage': {
-          if (orchestrator.isBusy()) return;
           const text = data.text.trim();
           if (!text) return;
+
+          if (orchestrator.isBusy()) {
+            globalPromptQueue.enqueue(text);
+            webviewView.webview.postMessage({
+              command: 'updateQueue',
+              queue: globalPromptQueue.getAll().map(q => q.text)
+            });
+            return;
+          }
+
 
           if (text === '/clear') {
             tui.setLogItems([]);
@@ -222,8 +232,24 @@ class DeepSeekChatProvider implements vscode.WebviewViewProvider {
           // Auto-checkpoint
           const cp = checkpoints.createCheckpoint(text);
 
-          // Trigger ask loop
-          orchestrator.ask(text, cp ? { checkpointId: cp.id } : {}).catch(() => {});
+          // Trigger ask loop; drain queue when done
+          orchestrator.ask(text, cp ? { checkpointId: cp.id } : {}).finally(() => {
+            webviewView.webview.postMessage({ command: 'updateQueue', queue: [] });
+            const next = globalPromptQueue.dequeue();
+            if (next) {
+              // Re-emit as a synthetic sendMessage so all slash-command logic runs
+              const nextCp = checkpoints.createCheckpoint(next.text);
+              orchestrator.ask(next.text, nextCp ? { checkpointId: nextCp.id } : {}).finally(() => {
+                webviewView.webview.postMessage({ command: 'updateQueue', queue: [] });
+                // Drain further items recursively via the queue subscriber below
+                const afterNext = globalPromptQueue.dequeue();
+                if (afterNext) {
+                  const afterCp = checkpoints.createCheckpoint(afterNext.text);
+                  orchestrator.ask(afterNext.text, afterCp ? { checkpointId: afterCp.id } : {}).catch(() => {});
+                }
+              }).catch(() => {});
+            }
+          }).catch(() => {});
           break;
         }
 
