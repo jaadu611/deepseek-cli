@@ -46,7 +46,9 @@ module.exports = {
         try { items = fs.readdirSync(dir, { withFileTypes: true }); } catch { return [`${prefix}[unreadable]`]; }
         const lines = [];
         for (const item of items) {
-          if (IGNORE.has(item.name)) continue;
+          const { shouldIgnore } = require('../utils/ignore');
+          const fullPath = path.join(dir, item.name);
+          if (shouldIgnore(fullPath)) continue;
           const connector = '├── ';
           const childPrefix = '│   ';
           if (item.isDirectory()) {

@@ -75,14 +75,17 @@ module.exports = {
                 const visible = items.filter(it => !it.name.startsWith('.') || it.name === '.gitignore' || it.name === '.env.example' || it.name === '.editorconfig');
                 for (let i = 0; i < visible.length; i++) {
                     const item = visible[i];
-                    if (IGNORE_DIRS.has(item.name)) {
-                        treeLines.push(`${prefix}[skip] ${item.name}/`);
+                    const full = path.join(dir, item.name);
+                    const { shouldIgnore } = require('../utils/ignore');
+                    if (shouldIgnore(full)) {
+                        if (item.isDirectory()) {
+                            treeLines.push(`${prefix}[skip] ${item.name}/`);
+                        }
                         continue;
                     }
                     const isLast = i === visible.length - 1;
                     const connector = isLast ? '└── ' : '├── ';
                     const childPrefix = prefix + (isLast ? '    ' : '│   ');
-                    const full = path.join(dir, item.name);
                     if (item.isDirectory()) {
                         treeLines.push(`${prefix}${connector}${item.name}/`);
                         walk(full, depth + 1, childPrefix);

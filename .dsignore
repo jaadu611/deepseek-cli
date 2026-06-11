@@ -1,0 +1,10 @@
+# DeepSeek CLI / VSCode Ignore list
+# List files and directories to ignore during code searches and listings
+
+scraper-profile/
+ds_config/
+scratch/
+dist/
+node_modules/
+.git/
+deepseek-chat-1.0.0.vsix

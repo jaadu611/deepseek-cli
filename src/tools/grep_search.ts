@@ -35,11 +35,12 @@ module.exports = {
       }
       const maxLimit = Math.min(limit, 500);
       let filePattern = include || '**/*';
+      const { getGlobIgnorePatterns } = require('../utils/ignore');
       const globOptions = {
         cwd: searchDir,
         absolute: true,
         nodir: true,
-        ignore: ['**/node_modules/**', '**/.git/**', '**/dist/**', '**/build/**']
+        ignore: getGlobIgnorePatterns()
       };
       if (exclude) {
         globOptions.ignore.push(exclude);

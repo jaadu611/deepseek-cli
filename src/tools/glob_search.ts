@@ -26,11 +26,12 @@ module.exports = {
         return `Error: Directory not found: ${searchDir}`;
       }
       const maxLimit = Math.min(limit, 500);
+      const { getGlobIgnorePatterns } = require('../utils/ignore');
       const options = {
         cwd: searchDir,
         absolute: true,
         nodir: false,
-        ignore: ['**/node_modules/**', '**/.git/**']
+        ignore: getGlobIgnorePatterns()
       };
       let matches = await glob(pattern, options);
       matches = matches.sort();
