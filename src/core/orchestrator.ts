@@ -888,9 +888,37 @@ async function handleGitDirtyWorkspace() {
     if (err.message === 'ABORTED_BY_USER') {
       throw err;
     }
-    // Ignore other errors (non-git repo, git command failure, etc.)
   }
 }
+
+function detectBatchPatchCollisions(batch) {
+  const fileToTools = new Map();
+  for (const c of batch) {
+    if (c.tool === "patch_file" && c.path) {
+      const resolved = path.resolve(c.path);
+      if (!fileToTools.has(resolved)) fileToTools.set(resolved, []);
+      fileToTools.get(resolved).push(c);
+    } else if (c.tool === "patch_multiple_files" && c.patches && Array.isArray(c.patches)) {
+      for (const p of c.patches) {
+        if (p && p.path) {
+          const resolved = path.resolve(p.path);
+          if (!fileToTools.has(resolved)) fileToTools.set(resolved, []);
+          fileToTools.get(resolved).push(c);
+        }
+      }
+    }
+  }
+  for (const [resolvedPath, calls] of fileToTools.entries()) {
+    if (calls.length > 1) {
+      const basename = path.basename(resolvedPath);
+      const errorMsg = `❌ Rejection: Parallel edits to the same file are forbidden in a single turn. You attempted to apply multiple concurrent patches/edits to '${basename}'. Because line numbers shift dynamically, concurrent patches will cause overlap errors or syntax corruption. Please modify files sequentially (one turn at a time) or merge the changes into a single contiguous block patch.`;
+      for (const c of calls) {
+        c._intercepted = errorMsg;
+      }
+    }
+  }
+}
+
 async function ask(prompt, options = {}) {
   setBusy(true);
   let lastToolCalls = [];
@@ -1198,6 +1226,7 @@ async function ask(prompt, options = {}) {
           };
         });
         for (const t of toolItems) logItems.push(t);
+        detectBatchPatchCollisions(batch);
         for (const c of batch) {
           saveMessage(sid, "tool_call", c.tool, { params: c });
           // ── Sub-agent prompt strictness guard (parallel batch) ──

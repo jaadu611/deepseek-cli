@@ -45,6 +45,16 @@ module.exports = {
         }
       }
     }
+    const paths = new Set();
+    for (const p of patches) {
+      if (p && p.path) {
+        const resolved = path.resolve(p.path);
+        if (paths.has(resolved)) {
+          return `❌ Rejection: Multiple patches for the same file '${path.basename(p.path)}' are not allowed in a single patch_multiple_files call. Due to line shifting, applying concurrent patches to the same file will cause corruption. Please apply them sequentially across turns or combine them into a single contiguous patch.`;
+        }
+        paths.add(resolved);
+      }
+    }
     const backups = []; // each entry: { original, backupPath }
     // Lazy Deletion Guard
     const LAZY_REGEX = /(\/\/|\/\*|\#|\-\-)\s*(\.\.\.|existing|rest|todo\s*:?\s*rest|placeholder|same|remains)/i;
