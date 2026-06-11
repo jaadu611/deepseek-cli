@@ -892,7 +892,7 @@ async function handleGitDirtyWorkspace() {
   }
 }
 async function ask(prompt, options = {}) {
-  busy = true;
+  setBusy(true);
   let lastToolCalls = [];
   function checkToolLoop(tool, params) {
     const key = JSON.stringify({ tool, params });
@@ -918,7 +918,7 @@ async function ask(prompt, options = {}) {
       await handleGitDirtyWorkspace();
     } catch (err) {
       if (err.message === 'ABORTED_BY_USER') {
-        busy = false;
+        setBusy(false);
         tui.stopGlobalSpinner();
         return; // Stop execution, do not proceed further
       }
@@ -1440,7 +1440,7 @@ async function ask(prompt, options = {}) {
     tui.renderLog();
   }
 
-  busy = false;
+  setBusy(false);
   tui.refocusInput();
 }
 

@@ -50,6 +50,7 @@ If neither, it's treated as a final answer.
 - USE the same tool 3 times in a row on the same target. The circuit breaker will block you.
 - CALL write_file on an existing file. Use patch_file instead.
 - OMIT required parameters. The tool will fail.
+- CALL parallel patch_file/patch_multiple_files calls on the same file in a single turn. Line numbers shift dynamically, causing syntax corruption or mismatch errors on subsequent patches. Always apply multiple edits sequentially (one turn at a time) or combine them into a single contiguous block replacement.
 `;
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -130,6 +131,7 @@ const SHARED_SAFETY = `
 10. NEVER emit final-answer or tool-result text in your response until you have actually called the tool and received the real system response.
 11. NEVER call a tool with the same parameters 3 times in a row. The circuit breaker will block you. Switch tools or fix the root cause.
 12. NEVER fabricate file contents, function signatures, or command outputs. If you need to know what's in a file, read_file.
+13. NEVER call patch_file multiple times in parallel, or include multiple patches for the same file in patch_multiple_files, in a single turn. Because line numbers shift dynamically, concurrent/parallel patches on the same file will target shifted line numbers, leading to code corruption. Always edit a single file sequentially (one patch per turn), verifying the results after each step.
 `;
 
 // ─────────────────────────────────────────────────────────────────────────

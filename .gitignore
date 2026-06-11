@@ -1,5 +1,6 @@
-# Dependencies
+# Dependencies and installion file
 node_modules/
+*.vsix
 
 # Temporary plan/task files (old location, now in ds_config/scratch/)
 implementation_plan.md
