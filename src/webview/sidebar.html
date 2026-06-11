@@ -468,31 +468,6 @@
       gap: 6px;
     }
 
-    /* Queue display: grayed-out pending prompts above input */
-    .queue-display {
-      display: none;
-      flex-direction: column;
-      gap: 2px;
-      padding: 4px 6px;
-      margin-bottom: 4px;
-    }
-
-    .queue-display.visible {
-      display: flex;
-    }
-
-    .queue-item {
-      font-size: 11px;
-      color: var(--vscode-descriptionForeground, #858585);
-      font-style: italic;
-      padding: 2px 4px;
-      border-left: 2px solid var(--vscode-input-border, #3c3c3c);
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      opacity: 0.7;
-    }
-
     .textarea-wrapper {
       position: relative;
       border: 1px solid var(--vscode-input-border, #3c3c3c);
@@ -959,9 +934,6 @@
       </div>
     </div>
 
-    <!-- Queue Display: pending prompts shown above input -->
-    <div id="queueDisplay" class="queue-display"></div>
-
     <div class="textarea-wrapper">
       <button class="add-btn" title="Attach Context">
         <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
@@ -1348,20 +1320,6 @@
           if (el) {
             el.textContent = `Headless: ${headless ? "ON" : "OFF"}`;
             el.style.color = headless ? "#34d399" : "";
-          }
-          break;
-        }
-        case "updateQueue": {
-          const queueDisplay = document.getElementById("queueDisplay");
-          const items = message.queue || [];
-          if (items.length === 0) {
-            queueDisplay.innerHTML = "";
-            queueDisplay.classList.remove("visible");
-          } else {
-            queueDisplay.innerHTML = items
-              .map(t => `<div class="queue-item">${t.length > 60 ? t.substring(0, 60) + '...' : t}</div>`)
-              .join("");
-            queueDisplay.classList.add("visible");
           }
           break;
         }
