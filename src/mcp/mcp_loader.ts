@@ -148,4 +148,4 @@ async function cleanup() {
   }
 }
 
-module.exports = { init, getRegistry, callTool, cleanup };
+module.exports = { init, getRegistry, callTool, cleanup, CONFIG_PATH };

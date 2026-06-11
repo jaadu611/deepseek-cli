@@ -158,7 +158,7 @@ class DeepSeekChatProvider implements vscode.WebviewViewProvider {
             const logItems = tui.getLogItems();
 
             try {
-              const mcpConfigPath = path.join(__dirname, "mcp", "mcp.json");
+              const mcpConfigPath = mcpLoader.CONFIG_PATH;
               const config = JSON.parse(fs.readFileSync(mcpConfigPath, "utf8"));
               if (config.mcpServers && config.mcpServers[serverName]) {
                 logItems.push({ type: "error", message: `MCP server '${serverName}' already exists. Remove it from mcp.json first.` });
@@ -380,6 +380,65 @@ class DeepSeekChatProvider implements vscode.WebviewViewProvider {
           tui.handleConfirmationResponse(data.confirmed);
           break;
         }
+
+        case 'getConfig': {
+          try {
+            const configUtils = require('./utils/config');
+            const config = configUtils.loadConfig();
+            webviewView.webview.postMessage({
+              command: 'updateConfigState',
+              headless: !!config.headless
+            });
+          } catch (err) {}
+          break;
+        }
+
+        case 'toggleHeadless': {
+          try {
+            const configUtils = require('./utils/config');
+            const config = configUtils.loadConfig();
+            config.headless = !config.headless;
+            configUtils.saveConfig(config);
+            
+            webviewView.webview.postMessage({
+              command: 'updateConfigState',
+              headless: !!config.headless
+            });
+            
+            const logItems = tui.getLogItems();
+            logItems.push({
+              type: "status",
+              text: `Headless mode toggled to: ${config.headless ? "ON" : "OFF"}. Please restart browser to apply.`
+            });
+            tui.renderLog();
+          } catch (err) {}
+          break;
+        }
+
+        case 'restartBrowser': {
+          const logItems = tui.getLogItems();
+          logItems.push({ type: "status", text: "Restarting browser..." });
+          tui.renderLog();
+          tui.startGlobalSpinner();
+          
+          try {
+            const brain = brainRegistry.getActiveBrain();
+            if (brain && brain.id === 'deepseek-web') {
+              await brain.cleanup();
+              brain.initPromise = null;
+              await brain.init();
+              logItems.push({ type: "status", text: "✓ Browser restarted successfully." });
+            } else {
+              logItems.push({ type: "error", message: "Active brain is not deepseek-web." });
+            }
+          } catch (err: any) {
+            logItems.push({ type: "error", message: `Failed to restart browser: ${err.message}` });
+          } finally {
+            tui.stopGlobalSpinner();
+            tui.renderLog();
+          }
+          break;
+        }
       }
     });
 
@@ -419,7 +478,7 @@ class DeepSeekChatProvider implements vscode.WebviewViewProvider {
   }
 
   private _getHtmlForWebview(webview: vscode.Webview): string {
-    const htmlPath = path.join(this._context.extensionPath, 'src', 'webview', 'sidebar.html');
+    const htmlPath = path.join(this._context.extensionPath, 'dist', 'src', 'webview', 'sidebar.html');
     let html = fs.readFileSync(htmlPath, 'utf8');
     
     // Inject logo URI

@@ -1,0 +1,18 @@
+# Ignore source files (only compiled code in dist is needed)
+src/
+main.ts
+tsconfig.json
+
+# Ignore temporary/local development files
+scratch/
+scraper-profile/
+ds_config/
+
+# Ignore documentation/git files
+.git/
+.gitignore
+.vscode/
+
+# Ensure necessary files are included
+!dist/**
+!public/**

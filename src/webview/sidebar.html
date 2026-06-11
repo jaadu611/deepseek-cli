@@ -347,7 +347,8 @@
       position: absolute;
       top: 100%;
       right: 0;
-      margin-top: 2px;
+      margin-top: -4px;
+      padding-top: 6px;
       display: flex;
       gap: 4px;
       opacity: 0;
@@ -856,6 +857,18 @@
           <div class="custom-dropdown-item" onclick="selectMode('auto')">Auto Mode</div>
         </div>
       </div>
+      <div class="custom-dropdown" id="browserDropdownWrapper" tabindex="0">
+        <div class="custom-dropdown-selected" onclick="toggleBrowserMenu()">
+          <span>Browser</span>
+          <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M4.2 6L8 10.2 11.8 6H4.2z"/>
+          </svg>
+        </div>
+        <div class="custom-dropdown-menu hidden" id="browserMenu" style="min-width: 130px;">
+          <div class="custom-dropdown-item" id="headlessToggleItem" onclick="toggleHeadlessOption()">Headless: OFF</div>
+          <div class="custom-dropdown-item" onclick="restartBrowserOption()">Restart Browser</div>
+        </div>
+      </div>
       <button id="historyBtn" class="icon-btn" onclick="toggleHistory()" title="View History">
         <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
           <path d="M8.5 2C11.58 2 14 4.42 14 7.5c0 2.85-2.2 5.18-5 5.45v-1.01c2.28-.26 4-2.21 4-4.44C13 5.02 10.98 3 8.5 3c-1.33 0-2.52.58-3.35 1.5L6.5 6H2V1.5l1.83 1.83C4.85 2.37 6.6 2 8.5 2zm-1 3v3h3V7h-2V5h-1z"/>
@@ -1091,7 +1104,7 @@
       
       document.getElementById("currentModeDisplay").textContent = display;
       
-      const items = document.querySelectorAll(".custom-dropdown-item");
+      const items = document.querySelectorAll("#modeMenu .custom-dropdown-item");
       items.forEach(el => {
         el.classList.remove("active");
         if (el.textContent === display) el.classList.add("active");
@@ -1101,10 +1114,29 @@
       vscode.postMessage({ command: "changeMode", mode: mode });
     }
 
+    function toggleBrowserMenu() {
+      const menu = document.getElementById("browserMenu");
+      menu.classList.toggle("hidden");
+    }
+
+    function toggleHeadlessOption() {
+      vscode.postMessage({ command: "toggleHeadless" });
+      document.getElementById("browserMenu").classList.add("hidden");
+    }
+
+    function restartBrowserOption() {
+      vscode.postMessage({ command: "restartBrowser" });
+      document.getElementById("browserMenu").classList.add("hidden");
+    }
+
     document.addEventListener("click", (e) => {
       const wrapper = document.getElementById("modeDropdownWrapper");
       if (wrapper && !wrapper.contains(e.target)) {
         document.getElementById("modeMenu").classList.add("hidden");
+      }
+      const browserWrapper = document.getElementById("browserDropdownWrapper");
+      if (browserWrapper && !browserWrapper.contains(e.target)) {
+        document.getElementById("browserMenu").classList.add("hidden");
       }
     });
 
@@ -1282,6 +1314,15 @@
         case "askConfirmation":
           showAskConfirmation(message.message);
           break;
+        case "updateConfigState": {
+          const headless = !!message.headless;
+          const el = document.getElementById("headlessToggleItem");
+          if (el) {
+            el.textContent = `Headless: ${headless ? "ON" : "OFF"}`;
+            el.style.color = headless ? "#34d399" : "";
+          }
+          break;
+        }
       }
     });
 
@@ -1674,6 +1715,9 @@
         }
       }
     }
+
+    // Request initial config state when webview loads
+    vscode.postMessage({ command: "getConfig" });
   </script>
 </body>
 </html>

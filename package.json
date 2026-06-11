@@ -9,7 +9,7 @@
   },
   "categories": [
     "AI",
-    "Programming Language"
+    "Chat"
   ],
   "activationEvents": [],
   "contributes": {
@@ -18,7 +18,7 @@
         {
           "id": "deepseek-sidebar-container",
           "title": "DeepSeek",
-          "icon": "comment-discussion"
+          "icon": "public/deepseek-gray.svg"
         }
       ]
     },
@@ -37,8 +37,9 @@
     "ds": "./dist/main.js"
   },
   "scripts": {
-    "build": "tsc",
-    "watch": "tsc -w",
+    "build": "tsc && npm run copy-assets",
+    "copy-assets": "node copy_assets.js",
+    "watch": "npm run copy-assets && tsc -w",
     "start": "node dist/main.js",
     "dev": "node src/cli/cli.js",
     "test": "echo \"Error: no test specified\" && exit 1"
@@ -52,6 +53,10 @@
     "glob": "^10.4.1",
     "playwright": "^1.60.0",
     "playwright-stealth": "^0.0.1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jaadu611/deepseek-cli"
   },
   "devDependencies": {
     "@types/node": "^20.19.42",

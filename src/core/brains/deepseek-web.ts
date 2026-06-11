@@ -227,14 +227,20 @@ class DeepSeekWebBrain extends BaseBrain {
       const projectRoot = isCompiled
         ? path.resolve(__dirname, "../../../../")
         : path.resolve(__dirname, "../../../");
+
+      const config = require("../../utils/config").loadConfig();
+      const spawnArgs = [
+        "--remote-debugging-port=9222",
+        "--user-data-dir=" + path.join(projectRoot, "scraper-profile"),
+        `--user-agent=${userAgent}`,
+      ];
+      if (config.headless) {
+        spawnArgs.push("--headless=new");
+      }
+
       const child = spawn(
         "chromium",
-        [
-          // "--headless=new",
-          "--remote-debugging-port=9222",
-          "--user-data-dir=" + path.join(projectRoot, "scraper-profile"),
-          `--user-agent=${userAgent}`,
-        ],
+        spawnArgs,
         {
           detached: true,
           stdio: "ignore",

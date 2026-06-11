@@ -197,7 +197,7 @@ tui.input.on("submit", async (val) => {
     const logItems = tui.getLogItems();
 
     try {
-      const mcpConfigPath = path.join(__dirname, "mcp", "mcp.json");
+      const mcpConfigPath = mcpLoader.CONFIG_PATH;
       const config = JSON.parse(fs.readFileSync(mcpConfigPath, "utf8"));
       if (config.mcpServers[serverName]) {
         logItems.push({ type: "error", message: `MCP server '${serverName}' already exists. Remove it from mcp.json first.` });
@@ -263,7 +263,7 @@ tui.input.on("submit", async (val) => {
   if (val === "/list-mcp") {
     const logItems = tui.getLogItems();
     try {
-      const mcpConfigPath = path.join(__dirname, "mcp", "mcp.json");
+      const mcpConfigPath = mcpLoader.CONFIG_PATH;
       const config = JSON.parse(fs.readFileSync(mcpConfigPath, "utf8"));
       const servers = Object.entries(config.mcpServers || {});
       let output = "## Installed MCP Servers\n\n";
