@@ -364,29 +364,27 @@ Turn N+1 (after user types 1): continue with exp-backoff.
 const PLAN_PROMPT = `
 # MODE: PLAN — READ-ONLY PLANNING MODE
 
-You are the Lead Architect. UNDERSTAND the request deeply, then produce a clear, executable, file-by-file plan. You DO NOT modify any source code. You DO edit exactly one file: ./implementation_plan.md (auto-pre-created for you by the orchestrator when the user typed /plan).
+You are the Lead Architect. UNDERSTAND the request deeply, then produce a clear, executable, file-by-file plan. You DO NOT modify any source code. You DO write planning documents: ./implementation_plan.md and ./verification.md.
 
 # WHAT YOU CAN DO
 - All READ tools: codebase_summary, list_directory, file_info, read_file, glob_search, grep_search, quick_search, get_file_diff, get_recent_errors, get_workflow_content, find_workflow, search_tool_registry, list_scratch_files, read_scratch_file, write_scratch_file, update_task, update_project_memory, ask_user, snapshot_state.
-- write_file: ONLY for ./implementation_plan.md. The orchestrator pre-creates this file with a stub on /plan entry.
 - execute_shell_command: ONLY read-only commands. Allowed prefixes: ls, cat, grep, find, head, tail, wc, file, tree, which, echo, ps, top, git log/diff/status/show/branch/tag/remote, node --version, npm --version, python --version, go version, cargo --version, rustc --version, java -version. Blocked: redirects (>), rm, mv, cp, mkdir, touch, chmod, chown, curl -o, wget -O, npm install, pip install, systemctl.
 - run_sub_agent: ALLOWED but the sub-agent is forced into read-only "planner" sub-mode.
 
 # WHAT YOU CANNOT DO
 - patch_file: BLOCKED.
 - patch_multiple_files: BLOCKED.
-- write_file on any path other than ./implementation_plan.md: BLOCKED.
+- write_file on any path other than ./implementation_plan.md or ./verification.md: BLOCKED.
 - execute_shell_command with any mutating command: BLOCKED.
 
 # EXECUTION FLOW (FOLLOW — DO NOT SKIP)
 1. CALL codebase_summary to get a 1-shot view of the project.
 2. CALL update_task(action="get") to read the current task.md.
-3. READ the implementation_plan.md stub the harness pre-created.
-4. USE the read tools to gather what you need (3-15 reads usually).
-5. WRITE the full plan to ./implementation_plan.md (overwrite the stub).
+3. USE the read tools to gather what you need (3-15 reads usually).
+4. WRITE your plan to ./implementation_plan.md using write_file (no auto-stub is provided).
+5. If needed, create ./verification.md to document verification planning.
 6. USE ask_user if you need any clarification.
-7. USE ask_user if you need any clarification.
-8. END with a plain-text turn: "READY: <one-line>" OR "ASK_USER: <what you need>".
+7. END with a plain-text turn: "READY: <one-line>" OR "ASK_USER: <what you need>".
 
 # PLAN FILE SCHEMA (use these exact section headings)
 
@@ -922,7 +920,7 @@ function getActModePrompt() { return getSystemPromptForMode('act'); }
 
 const PLAN_MODE_BLOCKED_TOOLS = new Set(['patch_file', 'patch_multiple_files']);
 const PLAN_MODE_RESTRICTED_TOOLS = {
-  write_file: { allowedPaths: ['./implementation_plan.md', 'implementation_plan.md'] },
+  write_file: { allowedPaths: ['./implementation_plan.md', 'implementation_plan.md', './verification.md', 'verification.md'] },
 };
 const PLAN_MODE_READ_ONLY_SHELL_REGEX = /^(ls|cat|grep|find|head|tail|wc|file|tree|which|echo|ps|top|git\s+(log|diff|status|show|branch|tag|remote)|node\s+--version|npm\s+--version|python\s+--version|go\s+version|cargo\s+--version|rustc\s+--version|java\s+-version)/;
 function isShellCommandReadOnly(cmd) {
@@ -947,7 +945,7 @@ function canCallToolInPlanMode(toolName, params) {
       const path = (params && (params.path || params.filePath || params.filename)) || '';
       const allowed = rule.allowedPaths.some(p => path === p || path.endsWith(p));
       if (!allowed) {
-        return { allowed: false, reason: '[BLOCKED] write_file in plan mode is allowed ONLY for ./implementation_plan.md. Got: ' + path + '. Type /act to switch.' };
+        return { allowed: false, reason: '[BLOCKED] write_file in plan mode is allowed ONLY for ./implementation_plan.md and ./verification.md. Got: ' + path + '. Type /act to switch.' };
       }
     }
     if (rule.allowedCommands) {

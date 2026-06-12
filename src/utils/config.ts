@@ -31,7 +31,22 @@ function loadConfig() {
     allowed_directories: [],
     blocked_commands: [],
     max_tool_output_length: 4000,
-    verification_commands: []
+    verification_commands: [],
+    headless: false,
+    enforcements: {
+      require_type_cross_reference: true,
+      require_build_attempt: true,
+      require_edge_case_analysis: true,
+      deny_skip_without_documentation: true,
+      self_test_required: "pass_or_skipped_with_reason"
+    },
+    plan_mode: {
+      disable_all_verification: true,
+      allow_write_implementation_plan: true,
+      allow_write_verification_md: true,
+      allow_read_all_files: true,
+      blocked_actions: []
+    }
   };
   if (fs.existsSync(CONFIG_PATH)) {
     try {

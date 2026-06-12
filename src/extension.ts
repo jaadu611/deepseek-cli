@@ -470,7 +470,7 @@ class DeepSeekChatProvider implements vscode.WebviewViewProvider {
           
           try {
             const brain = brainRegistry.getActiveBrain();
-            if (brain && brain.id === 'deepseek-web') {
+            if (brain && (brain.id === 'deepseek-web' || (brain.constructor && brain.constructor.id === 'deepseek-web'))) {
               await brain.cleanup();
               brain.initPromise = null;
               await brain.init();

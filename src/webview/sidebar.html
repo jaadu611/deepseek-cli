@@ -1367,10 +1367,13 @@
       const qBox = document.getElementById("askUserQuestion");
       const optionsContainer = document.getElementById("askUserOptions");
       const textInput = document.getElementById("askUserTextInput");
+      const modalActions = overlay.querySelector(".modal-actions");
 
       qBox.textContent = messageText;
       ctxBox.classList.add("hidden");
       textInput.classList.add("hidden");
+      // Hide askUser's Skip/Submit buttons — confirmation only needs Yes/No
+      if (modalActions) modalActions.classList.add("hidden");
 
       optionsContainer.innerHTML = "";
       
@@ -1388,6 +1391,9 @@
     function sendConfirmationResponse(confirmed) {
       document.getElementById("askUserOverlay").classList.add("hidden");
       document.getElementById("askUserTextInput").classList.remove("hidden");
+      // Restore the askUser modal actions for future ask_user calls
+      const modalActions = document.getElementById("askUserOverlay").querySelector(".modal-actions");
+      if (modalActions) modalActions.classList.remove("hidden");
       vscode.postMessage({ command: "askConfirmationResponse", confirmed: confirmed });
     }
 

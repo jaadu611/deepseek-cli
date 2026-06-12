@@ -4,26 +4,14 @@ const mcpLoader = require("../mcp/mcp_loader");
 const tui = require("../tui/tui");
 const brainRegistry = require("./brains/registry");
 const { loadConfig } = require("../utils/config");
-const harnessGuards = require("../utils/harness_guards");
 const modePrompts = require("../utils/mode_prompts");
 const { buildReminderPrompt } = require("../utils/reminder_prompt");
 const path = require("path");
 const fs = require("fs");
 const os = require("os");
 
-// ── Implementation plan auto-stub ─────────────────────────────────────────────
-const PLAN_STUB = `# Implementation Plan\n\n## 1. Summary\n<1-3 sentences. What the user actually wants.>\n\n## 2. Research findings (with citations as path/to/file.ts:LINE)\n- What you learned from reading\n- Dependencies / version constraints\n- Project conventions to follow\n\n## 3. File-by-file plan\n### Files to MODIFY\n- path/to/file.ts:LINE-LINE — what changes and WHY\n  New code: <paste it>\n\n### Files to CREATE\n- path/to/new.ts — outline of new file\n\n### Files to DELETE\n- <rare; flag as risk>\n\n## 4. Sub-agent delegation plan\n- List sub-agents (or "no sub-agents needed")\n- Coordination order\n\n## 5. Verification plan\n- Test files to create (happy / failure / regression)\n- Existing tests to re-run\n- Project workflow to follow (find_workflow)\n\n## 6. Risks and open questions\n- What could go wrong\n- Destructive operations the user should approve\n\n## 7. Done criteria (CHECKLIST)\n- [ ] Specific observable outcome 1\n- [ ] Specific observable outcome 2\n- [ ] Test name X passes\n- [ ] No regression in Y\n\n## 8. Handoff\nEither "READY: <one-line summary>" or "ASK_USER: <single question for the user>"\n`;
+// ── Implementation plan path ─────────────────────────────────────────────────
 const PLAN_PATH = './implementation_plan.md';
-
-function ensureImplementationPlanStub() {
-  try {
-    if (!fs.existsSync(PLAN_PATH)) {
-      fs.writeFileSync(PLAN_PATH, PLAN_STUB, 'utf8');
-    }
-  } catch (err) {
-    // Non-fatal: if we can't write, plan mode still works, just no pre-stub.
-  }
-}
 
 function readPlanHandoff(planPath) {
   try {
@@ -62,7 +50,6 @@ const {
   getSessions,
   updateSessionTitle,
   updateSessionDeepseekId,
-  getFilteredChatHistory,
 } = require("./history");
 let busy = false;
 
@@ -875,7 +862,7 @@ async function handleGitDirtyWorkspace() {
         const logItems = tui.getLogItems();
         logItems.push({
           type: "error",
-          text: "Operation aborted. Uncommitted changes remain."
+          message: "Operation aborted. Uncommitted changes remain."
         });
         tui.renderLog();
         const abortError = new Error('ABORTED_BY_USER');
@@ -1044,11 +1031,7 @@ async function ask(prompt, options = {}) {
     const list = checkpoints.listCheckpoints();
     const cp = list.length > 0 ? list[list.length - 1] : null;
 
-    // Auto-stub the plan file when entering plan mode (or first tool in plan mode)
     const currentMode = modePrompts.getMode();
-    if (currentMode === 'plan') {
-      ensureImplementationPlanStub();
-    }
 
     // Build the reminder state for this turn
     const scratchDir = getScratchDirForState();
@@ -1129,6 +1112,32 @@ async function ask(prompt, options = {}) {
 
       // FINAL ANSWER
       if (!parsed || parsed.response !== undefined) {
+        // In plan mode: skip all verification — no source code was changed
+        const isPlanMode = modePrompts.getMode() === 'plan';
+        if (isPlanMode) {
+          hasVerified = true; // bypass verification gate
+        }
+
+        // Hard gate: verification.md must exist if files were modified (ACT mode only)
+        if (!isPlanMode && hasEditedFiles) {
+          const verificationPath = path.resolve(PLAN_PATH.replace('implementation_plan.md', 'verification.md'));
+          // Also check plain ./verification.md
+          let verificationFound = fs.existsSync('./verification.md');
+          if (!verificationFound) {
+            verificationFound = fs.existsSync(verificationPath);
+          }
+          if (!verificationFound) {
+            const interceptMsg = `[SYSTEM INTERCEPT - MISSING verification.md]\n\nYou modified code but did NOT create a verification.md file documenting your work. This file is REQUIRED before completing a task.\n\nverification.md must include:\n- Files changed and what was modified\n- Type Cross-Reference (which interfaces/types you read and verified)\n- Build command and status (PASSED/FAILED/SKIPPED with reason)\n- Tests run and results\n- Edge cases analyzed (at least 2)\n- Self-Test Result (PASS/FAIL/SKIPPED)\n\nCreate the file now using write_file, then call attempt_completion again.`;
+            currentPrompt = interceptMsg;
+            isInitial = false;
+            dsItem.spinning = true;
+            dsItem.text = "";
+            dsItem.thinking = (dsItem.thinking || "") + "\n\n[SYSTEM INTERCEPT - MISSING verification.md]";
+            tui.renderLog();
+            continue;
+          }
+        }
+
         if (hasEditedFiles && !hasVerified) {
           const verificationResult = await runAutomaticVerification(modifiedFiles, responseText || thinkingText);
           if (!verificationResult.success) {
@@ -1559,7 +1568,6 @@ module.exports = {
   runAutomaticVerification,
   compactCurrentSession,
   // New helpers (exported for testing and other tools)
-  ensureImplementationPlanStub,
   readPlanHandoff,
   parseHandoffFromResponse,
   getScratchDirForState,

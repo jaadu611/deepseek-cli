@@ -1,7 +1,8 @@
 {
   "name": "deepseek-chat",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "DeepSeek AI CLI & VSCode Extension Chat Panel",
+  "icon": "public/deepseek-color.png",
   "main": "dist/src/extension.js",
   "publisher": "deepseek-cli",
   "engines": {
