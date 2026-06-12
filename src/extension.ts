@@ -19,6 +19,36 @@ const {
 } = require('./core/history');
 
 let pendingAskUserResolve: ((value: string) => void) | null = null;
+let promptQueue: string[] = [];
+
+function updateQueueUI(webviewView: vscode.WebviewView) {
+  webviewView.webview.postMessage({
+    command: 'updateQueue',
+    queue: promptQueue
+  });
+}
+
+async function processNextInQueue(webviewView: vscode.WebviewView) {
+  if (orchestrator.isBusy()) return;
+  if (promptQueue.length === 0) return;
+  const nextPrompt = promptQueue.shift();
+  updateQueueUI(webviewView);
+  if (nextPrompt) {
+    await handlePrompt(nextPrompt, webviewView);
+  }
+}
+
+async function handlePrompt(text: string, webviewView: vscode.WebviewView) {
+  orchestrator.setBusy(true);
+  try {
+    const cp = checkpoints.createCheckpoint(text);
+    await orchestrator.ask(text, cp ? { checkpointId: cp.id } : {});
+  } finally {
+    orchestrator.setBusy(false);
+    await processNextInQueue(webviewView);
+  }
+}
+
 
 export function activate(context: vscode.ExtensionContext) {
   // Set working directory to VSCode workspace folder if available
@@ -95,8 +125,27 @@ class DeepSeekChatProvider implements vscode.WebviewViewProvider {
     webviewView.webview.onDidReceiveMessage(async (data) => {
       switch (data.command) {
         case 'sendMessage': {
-          if (orchestrator.isBusy()) return;
           const text = data.text.trim();
+          if (!text) return;
+
+          // Slash commands execute immediately (no queue)
+          if (text === '/clear' || text === '/compact' || 
+              text.startsWith('/install-workflow') || text.startsWith('/install-mcp') || 
+              text === '/list-workflows') {
+            // Original handling continues below after this block
+          } else {
+            // Regular prompt: queue if busy, else process immediately
+            if (orchestrator.isBusy()) {
+              promptQueue.push(text);
+              updateQueueUI(webviewView);
+              return;
+            }
+            await handlePrompt(text, webviewView);
+            break;
+          }
+
+          // Original slash command handling (unchanged)
+          if (orchestrator.isBusy()) return;
           if (!text) return;
 
           if (text === '/clear') {

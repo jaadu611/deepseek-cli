@@ -112,6 +112,21 @@
       color: var(--vscode-list-activeSelectionForeground, #ffffff);
     }
 
+    /* Queue Bar */
+    .queue-bar {
+      padding: 6px 12px;
+      font-size: 12px;
+      color: var(--vscode-descriptionForeground, #858585);
+      background-color: var(--vscode-editorWidget-background, #252526);
+      border-bottom: 1px solid var(--vscode-sideBar-border, #2b2b2b);
+      white-space: nowrap;
+      overflow-x: auto;
+      scrollbar-width: none;
+    }
+    .queue-bar::-webkit-scrollbar {
+      display: none;
+    }
+
     .icon-btn {
       background: none;
       border: 1px solid var(--vscode-sideBar-border, #454545);
@@ -912,6 +927,9 @@
     <!-- Message items inserted here -->
   </div>
 
+  <!-- Queue Bar -->
+  <div id="queueBar" class="queue-bar" style="display: none;"></div>
+
   <!-- Input Panel -->
   <div class="input-panel">
     <div id="slashMenu" class="slash-menu hidden"></div>
@@ -951,6 +969,23 @@
 
   <script>
     const vscode = acquireVsCodeApi();
+
+    // Queue UI handler
+    window.addEventListener('message', (event) => {
+      const data = event.data;
+      if (data.command === 'updateQueue') {
+        const queueBar = document.getElementById('queueBar');
+        const queue = data.queue;
+        if (queue && queue.length > 0) {
+          const truncated = queue.map(p => p.length > 40 ? p.slice(0,37) + '...' : p).join(', ');
+          queueBar.textContent = `queued: ${truncated}`;
+          queueBar.style.display = 'block';
+        } else {
+          queueBar.style.display = 'none';
+          queueBar.textContent = '';
+        }
+      }
+    });
 
     // Client-side markdown helper
     function markdownToHtml(text) {

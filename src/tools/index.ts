@@ -237,7 +237,7 @@ function buildBaseScaffolding(userPrompt) {
 
   const gitContext = getGitContext();
   // Inject live state at build time:
-  //  - scratch file inventory (so the model re-grounds on task.md / thinking.md)
+  //  - scratch file inventory (so the model re-grounds on task.md)
   //  - project memory (AGENTS.md content)
   let scratchInventory = '';
   try {
@@ -256,7 +256,7 @@ function buildBaseScaffolding(userPrompt) {
         else lines.push(`  📄 ${it.name}  (${st.size}B, ${mtime})`);
       }
       if (lines.length) {
-        scratchInventory = '\n\n# LIVE SCRATCH INVENTORY (' + scratchDir + ')\n' + lines.join('\n') + '\n  → If task.md is present, call update_task(action="get") FIRST this turn.\n  → If thinking.md is present, call read_scratch_file("thinking.md") to skim prior reasoning.\n';
+        scratchInventory = '\n\n# LIVE SCRATCH INVENTORY (' + scratchDir + ')\n' + lines.join('\n') + '\n  → If task.md is present, call update_task(action="get") FIRST this turn.\n';
       }
     }
   } catch {}
@@ -276,14 +276,14 @@ function buildBaseScaffolding(userPrompt) {
 - Once a Sub-Agent finishes its micro-task, its tab is automatically destroyed. You review the changes, patch any integration issues, and then move to the next micro-task.
 
 # DELEGATE-ONLY-WHEN-INDEPENDENT
-- The mode_prompts blocks (TOOL_CATALOG, SHARED_SAFETY, THINK_OUT_LOUD, TASK_MD_RULE, SCRATCH_REUSE_RULE, WRITE-AND-RUN-TESTS, ERROR_RECOVERY, CLARIFICATION, PROHIBITED_PHRASES, EXAMPLES, ACT_PROMPT) are appended after this base scaffolding. They are the single source of truth for the rules; this scaffolding is the project-state wrapper.
-- Use the **think** tool before big decisions. Use **ask_user** to clarify. Use **update_task** to track multi-step work. Use **update_project_memory** to remember lessons.
+- The mode_prompts blocks (TOOL_CATALOG, SHARED_SAFETY, TASK_MD_RULE, SCRATCH_REUSE_RULE, WRITE-AND-RUN-TESTS, ERROR_RECOVERY, CLARIFICATION, PROHIBITED_PHRASES, EXAMPLES, ACT_PROMPT) are appended after this base scaffolding. They are the single source of truth for the rules; this scaffolding is the project-state wrapper.
+- Use **ask_user** to clarify. Use **update_task** to track multi-step work. Use **update_project_memory** to remember lessons.
 ${projectMemory}${scratchInventory}
 # TOOL-BY-TOOL QUICK REFERENCE (full catalog in TOOL_CATALOG block below)
 - Read: codebase_summary, list_directory, file_info, read_file, glob_search, grep_search, quick_search, get_file_diff, get_recent_errors.
 - Edit: write_file (NEW only), patch_file (PRIMARY), patch_multiple_files, restore_file.
 - Execute: execute_shell_command.
-- Memory: write_scratch_file, read_scratch_file, list_scratch_files, update_task, update_project_memory, think, ask_user.
+- Memory: write_scratch_file, read_scratch_file, list_scratch_files, update_task, update_project_memory, ask_user.
 - Snapshots: snapshot_state, restore_to_snapshot.
 - Sub-agents: run_sub_agent, search_tool_registry.
 - Workflows: find_workflow, get_workflow_content.
@@ -347,19 +347,16 @@ or
 If your final answer does NOT include a self-test result line, the orchestrator will REJECT the answer and ask you to re-run the test.
 
 # WORKFLOW-FIRST RULE (MANDATORY - HIGHEST PRIORITY)
-- BEFORE any sequential thinking, planning, or code changes, you MUST check if there are workflows relevant to the current task.
+- BEFORE any planning or code changes, you MUST check if there are workflows relevant to the current task.
 - Use the \\\`find_workflow\\\` tool with a query describing the task (e.g., "typescript verification", "python testing").
 - If matching workflows are found, use \\\`get_workflow_content\\\` to load the full workflow instructions.
 - Follow the workflow's steps for verification, building, testing, or any other language-specific operations.
 - Do NOT proceed with code changes until you have loaded applicable workflows.
 
 # RESEARCH & CODEBASE UNDERSTANDING (MANDATORY FIRST STEP)
-- Before you begin sequential thinking, planning, or dispatching any sub-agents, you MUST locate and read the existing relevant code files (using \`read_file\`, \`glob_search\`, \`grep_search\`) to understand what is broken or where a new feature needs to be added.
-- You MUST NEVER start thinking, planning, or writing an implementation plan based on guesswork or assumptions. You must read the actual files first.
-- You can go back and forth between reading files and sequential thinking if you need to recheck, clarify, or verify any codebase details during your analysis.
-
-# SEQUENTIAL THINKING RULE (MANDATORY)
-- After understanding the codebase context and before dispatching any sub-agent or writing the plan, you MUST call the native think tool to structure your reasoning, analyze the design, and define precise parameters and interface contracts.
+- Before you begin planning or dispatching any sub-agents, you MUST locate and read the existing relevant code files (using \`read_file\`, \`glob_search\`, \`grep_search\`) to understand what is broken or where a new feature needs to be added.
+- You MUST NEVER start planning or writing an implementation plan based on guesswork or assumptions. You must read the actual files first.
+- You can go back and forth between reading files and planning if you need to recheck, clarify, or verify any codebase details during your analysis.
 
 # SUB-AGENT DISPATCH PROTOCOL
 When calling "run_sub_agent", you MUST write a HIGH-DENSITY, UNAMBIGUOUS prompt. A system guard will REJECT your prompt and force you to retry if any of the following rules are violated:
@@ -504,8 +501,8 @@ function getSubAgentSystemPrompt(userPrompt, agentNumber = 1) {
 
   return `You are a Sub-Agent (Grunt Worker) executing a precise micro-task of a larger implementation plan. You are a precise, obedient machine. You follow instructions exactly.
 ${workspacePathsContext}
-# SEQUENTIAL THINKING
-- For complex logic problems or architectural decisions, you should search the MCP tool list and use the think tool to record your step-by-step reasoning.
+# REASONING
+- For complex logic problems or architectural decisions, work through the problem step by step in your response before making tool calls.
 
 # LANGUAGE & OUTPUT RULES
 - You MUST respond in English at all times.
@@ -636,7 +633,7 @@ Answer immediately in plain text.
 7. **SHELL SAFETY**: Always use non-interactive flags (-y, --yes, --noconfirm).
 8. **ON FAILURE**: Try a new approach. Do not dump debugging noise to the user unless asked.
 9. **MCP PREFERENCE & TOOL DISCOVERY**: For any task requiring external capabilities (such as web browsing, database access, git, or complex APIs), ALWAYS check if a matching MCP server is available or call \`search_tool_registry\` to discover external tools. Prefer dedicated MCP tools over writing custom scripts or running raw shell commands.
-10. **DEEP REASONING**: For complex logic problems, use the sequentialthinking MCP tool instead of reasoning in chat.
+10. **DEEP REASONING**: For complex logic problems, reason step by step in your response before making tool calls.
 
 # DECISION TREE
 

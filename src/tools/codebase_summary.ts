@@ -32,7 +32,7 @@ function countByExt(files) {
 }
 module.exports = {
     name: "codebase_summary",
-    description: "Returns a one-shot summary of a project: directory tree (depth 3, skipping generated dirs), file counts by language, and a list of notable config files (package.json, README, Dockerfile, etc.). Call this FIRST when you join a new project to understand its shape. ~50-200 lines of output, far cheaper than 20 grep_search calls.",
+    description: "Returns a one-shot summary of a project: project architecture detection (VS Code extension, CLI tool, web app, Python/Rust/Go project, frameworks used), directory tree (depth 3, skipping generated dirs), file counts by language, and notable config files. Call this FIRST when you join a new project — it tells you the project type, tech stack, and file layout in one call. ~50-200 lines of output, far cheaper than 20 grep_search calls.",
     parameters: {
         type: "object",
         properties: {
@@ -123,10 +123,78 @@ module.exports = {
                     notable.push(`  - ${nf}  (${size})`);
                 }
             }
-            // 4. Build output
+            // 4. Detect project architecture
+            const architecture = [];
+            const pkgJsonPath = path.join(projectDir, 'package.json');
+            if (fs.existsSync(pkgJsonPath)) {
+                try {
+                    const pkg = JSON.parse(fs.readFileSync(pkgJsonPath, 'utf8'));
+                    // VS Code Extension
+                    if (pkg.engines && pkg.engines.vscode) {
+                        architecture.push("Type: VS Code Extension");
+                        architecture.push(`  - VS Code engine: ${pkg.engines.vscode}`);
+                        if (pkg.contributes) {
+                            const contributions = Object.keys(pkg.contributes);
+                            architecture.push(`  - Contributions: ${contributions.join(', ')}`);
+                        }
+                        if (pkg.main) {
+                            architecture.push(`  - Entry point: ${pkg.main}`);
+                        }
+                    }
+                    // Node.js CLI tool
+                    if (pkg.bin) {
+                        const bins = typeof pkg.bin === 'string' ? [pkg.bin] : Object.keys(pkg.bin);
+                        architecture.push(`Type: CLI tool (commands: ${bins.join(', ')})`);
+                    }
+                    // Web framework detection
+                    const allDeps = { ...pkg.dependencies, ...pkg.devDependencies };
+                    const frameworks = [];
+                    if (allDeps.react) frameworks.push('React');
+                    if (allDeps.vue) frameworks.push('Vue');
+                    if (allDeps.angular || allDeps['@angular/core']) frameworks.push('Angular');
+                    if (allDeps.svelte) frameworks.push('Svelte');
+                    if (allDeps.next) frameworks.push('Next.js');
+                    if (allDeps.nuxt) frameworks.push('Nuxt');
+                    if (allDeps.express) frameworks.push('Express');
+                    if (allDeps.fastify) frameworks.push('Fastify');
+                    if (allDeps.koa) frameworks.push('Koa');
+                    if (allDeps.hono) frameworks.push('Hono');
+                    if (allDeps.typescript) frameworks.push('TypeScript');
+                    if (frameworks.length > 0) {
+                        architecture.push(`Frameworks: ${frameworks.join(', ')}`);
+                    }
+                    // Script detection
+                    if (pkg.scripts) {
+                        const scripts = Object.keys(pkg.scripts);
+                        architecture.push(`  - Scripts: ${scripts.join(', ')}`);
+                    }
+                } catch (e) {
+                    architecture.push(`Type: Could not parse package.json (${e.message})`);
+                }
+            }
+            // Python detection
+            if (allFiles.some(f => f.endsWith('requirements.txt') || f.endsWith('pyproject.toml') || f.endsWith('setup.py'))) {
+                architecture.push("Type: Python project");
+            }
+            // Rust detection
+            if (allFiles.some(f => f.endsWith('Cargo.toml'))) {
+                architecture.push("Type: Rust project");
+            }
+            // Go detection
+            if (allFiles.some(f => f.endsWith('go.mod'))) {
+                architecture.push("Type: Go project");
+            }
+            // 5. Build output
             const out = [];
             out.push(`[Codebase Summary: ${projectDir}]`);
             out.push("");
+            if (architecture.length > 0) {
+                out.push(`## Project Architecture`);
+                for (const line of architecture) {
+                    out.push(`  ${line}`);
+                }
+                out.push("");
+            }
             out.push(`## Directory tree (depth ${max_depth}, ${allFiles.length} files enumerated)`);
             out.push("");
             out.push(projectDir);

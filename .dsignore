@@ -8,3 +8,4 @@ dist/
 node_modules/
 .git/
 deepseek-chat-1.0.0.vsix
+test/
