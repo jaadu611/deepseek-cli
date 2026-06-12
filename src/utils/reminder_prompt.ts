@@ -124,6 +124,16 @@ function buildReminderPrompt(state) {
     ? `\n🧪 TEST NAG: You have edited code (write/patch) but have NOT run a test yet. Write a temp test, run it, only then finalize.\n`
     : '';
 
+  // ── patching safety nag ───────────────────────────────────────────────
+  // Fires after every patch to remind the model about line drift and write_file
+  const patchSafetyNag = state.hasEditedFiles
+    ? `\n⚠️ PATCHING SAFETY (you just edited a file — READ THIS BEFORE YOUR NEXT PATCH):
+  1. LINE DRIFT: Any line numbers you had from a previous read_file are now STALE. If you need to patch the SAME file again, you MUST call read_file first to get fresh line numbers — OR use find_string/replace_string which is immune to drift.
+  2. NEVER use write_file on an existing file. It will be REJECTED. Use patch_file or patch_multiple_files.
+  3. PREFER find_string/replace_string over line ranges. String matching never goes stale.
+  4. If you are about to use start_line/end_line, verify you have read the file RECENTLY (this turn) after your last patch.`
+    : '';
+
   // ── sub-agent info ────────────────────────────────────────────────────
   const subAgentBudget = (state.subAgentNumber != null)
     ? `\n[SUB-AGENT #${state.subAgentNumber}] Budget: ${state.subAgentToolCount || 0}/${state.subAgentBudget || 25} tool calls. Stay in scope; your scratch/ is cleaned up when you finish. Return final text in your response, not just in scratch.\n`
@@ -133,7 +143,7 @@ function buildReminderPrompt(state) {
 # REMINDER (injected before each turn — NOT part of your system prompt)
 ${modeBadge}${modeChange}${lastUserMessage}
 
-${loopWarning}${sameErrorStreakWarn}${testNag}${subAgentBudget}
+${loopWarning}${sameErrorStreakWarn}${testNag}${patchSafetyNag}${subAgentBudget}
 [RECENT FILES TOUCHED]:
 ${recentFiles}
 ${taskProgressBlock}${scratchBlock}${handoffBlock}
@@ -145,6 +155,12 @@ ${taskProgressBlock}${scratchBlock}${handoffBlock}
 - DO NOT start a turn with a stalling preamble ("Let me think...", "I will now..."). Either call a tool or write the final answer.
 - If you are about to assume something, call ask_user instead. NEVER silently pick.
 - Final answer MUST include a self-test result line: "PASS  Self-test: ..." or "FAIL  Self-test: ...".
+
+[PATCHING REMINDER — applies to EVERY turn where you will edit files]:
+- PREFER find_string/replace_string (line-drift immune) over start_line/end_line.
+- NEVER reuse line numbers from a previous read_file after you have patched the file. Re-read first.
+- NEVER use write_file on an existing file — it will be REJECTED. Always use patch_file/patch_multiple_files.
+- After EVERY patch, if you need another edit on the same file, re-read it first.
 ${recentErrors}
 `;
 }

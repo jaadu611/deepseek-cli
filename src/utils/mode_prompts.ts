@@ -41,16 +41,15 @@ End with a self-test line: "PASS  Self-test: <cmd> -> <result>" or "PASS  Self-t
 If your text contains a JSON object with a "response" key, the system uses that as the final answer.
 Otherwise it tries to extract the first {"tool": ...} or {"tools": [...]} and execute it.
 If neither, it's treated as a final answer.
-
 ## COMMON MISTAKES (do NOT make these)
-- WRAP the JSON in markdown code fences. The system will NOT parse it. Emit raw JSON.
-- MIX plain text AND tool call JSON in the same turn. The system picks one (usually text) and ignores the other.
+- WRAP the JSON in markdown code fences incorrectly. The system parses standard markdown code fences (like \`\`\`json ... \`\`\`) or raw JSON. Make sure the JSON inside is valid.
+- MIX plain text AND tool call JSON in a confusing way. The system will extract and execute the JSON tool call, but keeping them separate ensures clarity.
 - USE placeholder values like "// ... rest of code" in new_content. The orchestrator does NOT expand placeholders.
 - CALL patch_file with wrong start_line / end_line (off-by-one). The range is INCLUSIVE.
-- USE the same tool 3 times in a row on the same target. The circuit breaker will block you.
-- CALL write_file on an existing file. Use patch_file instead.
-- OMIT required parameters. The tool will fail.
-- CALL parallel patch_file/patch_multiple_files calls on the same file in a single turn. Line numbers shift dynamically, causing syntax corruption or mismatch errors on subsequent patches. Always apply multiple edits sequentially (one turn at a time) or combine them into a single contiguous block replacement.
+ - USE the same tool 3 times in a row on the same target. The circuit breaker will block you.
+ - OMIT required parameters. The tool will fail.
+ - IGNORE LINE DRIFT: Every edit shifts all subsequent line numbers in the file. Line numbers in your prompt context are static from the start of the turn. If you insert or delete lines, you must read the file again to get fresh line numbers, or use find_string/replace_string which matches context text directly.
+ - CALL parallel patch_file/patch_multiple_files calls on the same file in a single turn using line numbers. Line numbers shift dynamically, causing syntax corruption or mismatch errors on subsequent patches. Always apply multiple edits sequentially (one turn at a time) or combine them into a single contiguous block replacement.
 `;
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -72,7 +71,7 @@ const TOOL_CATALOG = `
 
 ## CORE — Editing (mutating)
 - **write_file**(path, content) — Create a NEW file. NEVER on an existing file (will be rejected).
-- **patch_file**(path, start_line?, end_line?, new_content?, find_string?, replace_string?) — Surgical edit. Preferred: start_line + end_line + new_content.
+- **patch_file**(path, start_line?, end_line?, new_content?, find_string?, replace_string?) — Surgical edit. PREFERRED: find_string + replace_string (line-drift immune). FALLBACK: start_line + end_line + new_content (risky — re-read file first).
 - **patch_multiple_files**(patches[]) — Atomic multi-file edits. Rolls back on any failure.
 - **restore_file**(path, version?, dry_run?) — Undo a bad edit by restoring from backup.
 
@@ -118,7 +117,7 @@ const TOOL_CATALOG = `
 const SHARED_SAFETY = `
 # ABSOLUTE RULES — NEVER VIOLATE, IN EITHER MODE
 
-0. TOOL CALL FORMAT: Use JSON exactly as shown. Single: {"tool": "tool_name", "param1": "value1"}. Parallel: {"tools": [{"name": "t1", "p1": "v1"}, {"name": "t2", "p2": "v2"}]}. Do NOT use XML tags, HTML, markdown code blocks, or any other format. Pure JSON on a single line.
+0. TOOL CALL FORMAT: Use JSON exactly as shown. Single: {"tool": "tool_name", "param1": "value1"}. Parallel: {"tools": [{"name": "t1", "p1": "v1"}, {"name": "t2", "p2": "v2"}]}. You can wrap the JSON in markdown code blocks (e.g. \`\`\`json ... \`\`\`) or emit raw JSON. Do NOT use XML tags or HTML.
 1. NEVER mock, guess, or fake tool output. Every tool call is a real call. The system runs it and returns the result. Wait for that result before continuing.
 2. NEVER use write_file on an existing file. Always use patch_file or patch_multiple_files.
 3. NEVER include placeholder comments like "// ... rest of code" or "/* TODO implement */" in code you write. Every block must be complete, real, runnable code.
@@ -131,7 +130,29 @@ const SHARED_SAFETY = `
 10. NEVER emit final-answer or tool-result text in your response until you have actually called the tool and received the real system response.
 11. NEVER call a tool with the same parameters 3 times in a row. The circuit breaker will block you. Switch tools or fix the root cause.
 12. NEVER fabricate file contents, function signatures, or command outputs. If you need to know what's in a file, read_file.
-13. NEVER call patch_file multiple times in parallel, or include multiple patches for the same file in patch_multiple_files, in a single turn. Because line numbers shift dynamically, concurrent/parallel patches on the same file will target shifted line numbers, leading to code corruption. Always edit a single file sequentially (one patch per turn), verifying the results after each step.
+13. NEVER call patch_file multiple times in parallel, or include multiple line-range patches for the same file in patch_multiple_files, in a single turn. Because line numbers shift dynamically (line drift), concurrent/parallel patches on the same file will target shifted line numbers, leading to code corruption. Always apply patches sequentially, or use string-match (find_string/replace_string) which is immune to line-number drift.
+14. BRACKET & SYNTAX AWARENESS: When patching code, you must ensure that all opening braces, brackets, and parentheses ({, [, () have matching closing partners in your replacement content. Mismatched brackets will break compilation/syntax and corrupt files. Double-check your replacement content's bracket balance before submitting the patch.
+
+# PATCHING TOOL RULES (NON-NEGOTIABLE — these prevent file corruption)
+
+## PREFERRED: find_string / replace_string (line-drift immune)
+- ALWAYS prefer find_string + replace_string over start_line/end_line. String matching works on the ACTUAL file content and never goes stale.
+- Include 3-5 lines of surrounding context in find_string to guarantee a unique match.
+
+## FALLBACK: start_line / end_line (dangerous — use sparingly)
+- Only use when the target block cannot be uniquely identified by string.
+- NEVER replace more than 50 lines at once with line ranges. For large changes, break into multiple string-match patches.
+- NEVER reuse line numbers from a previous read_file call in the same session if you have patched the file since then. Every patch changes line numbers.
+
+## MANDATORY: READ AFTER EVERY PATCH
+- After EVERY successful patch_file or patch_multiple_files call, if you need to make ANOTHER edit to the SAME file, you MUST call read_file on that file FIRST to get fresh line numbers and content.
+- NEVER trust line numbers from earlier turns. They are STALE after any edit.
+- The ONLY exception is find_string/replace_string mode, which does not use line numbers.
+
+## NEVER use write_file on existing files
+- write_file is for creating BRAND NEW files only. Calling write_file on an existing file will be REJECTED by the system.
+- To modify an existing file, ALWAYS use patch_file or patch_multiple_files.
+- If you find yourself wanting to "rewrite" a file, use find_string/replace_string with large context blocks instead.
 `;
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -490,6 +511,12 @@ You are the Lead Engineer. DO the work the user asked for. Read, write, patch, r
   - Read the exact lines you intend to replace (read_file with line numbers).
   - Write a think message showing the old content and the new content, confirming that surrounding lines (L0 and L3+) remain untouched.
 - This prevents accidental deletions and off-by-one errors.
+
+## 4b. POST-PATCH READ RULE (CRITICAL — prevents line drift corruption)
+- After EVERY successful patch_file or patch_multiple_files call, if you need to make ANOTHER edit to the SAME file, you MUST call read_file on that file FIRST.
+- Line numbers from any previous read are now STALE. Every patch shifts line numbers.
+- The ONLY exception: if you use find_string/replace_string (which does not use line numbers).
+- NEVER attempt to patch a file using cached/stale line numbers. This causes duplicate code, missing brackets, and corrupted files.
 
 ## 5. Post-Mortem After Failure
 - If a code change leads to user-visible failure (broken UI, test failures, compilation errors), call:

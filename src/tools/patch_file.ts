@@ -6,16 +6,16 @@ const { getFileDiff } = require('../utils/diff_helper');
 
 module.exports = {
   name: "patch_file",
-  description: "Safely modifies a single existing file. PREFERRED METHOD: Use find_string + replace_string — context-aware and immune to line-number drift caused by prior edits in the same session. Include enough surrounding lines to make the match unique (the string must appear exactly once). FALLBACK: Use start_line + end_line + new_content only when the target block cannot be uniquely matched by string. CRITICAL: If you need multiple non-contiguous changes to the same file, do NOT call patch_file in parallel. Instead use patch_multiple_files with multiple find_string entries (supports multiple patches to the same file atomically), or call patch_file sequentially one change at a time. Parallel patch_file calls on the same file will be rejected. Creates a backup in ds_config/backups/ automatically.",
+  description: "Safely modifies a single existing file. PREFERRED METHOD: Use find_string + replace_string — context-aware and immune to line-number drift caused by prior edits in the same session. Include enough surrounding lines to make the match unique (the string must appear exactly once). FALLBACK: Use start_line + end_line + new_content ONLY when the target block cannot be uniquely matched by string — and you MUST read_file first to get current line numbers. CRITICAL RULES: (1) NEVER reuse line numbers from a previous read_file after you have already patched the file — line numbers are STALE. Re-read first. (2) NEVER use write_file on an existing file — it will be REJECTED. Always use patch_file or patch_multiple_files. (3) If you need multiple non-contiguous changes to the same file, do NOT call patch_file in parallel. Instead use patch_multiple_files with multiple find_string entries (supports multiple patches to the same file atomically), or call patch_file sequentially one change at a time. Parallel patch_file calls on the same file will be rejected. Creates a backup in ds_config/backups/ automatically.",
   parameters: {
     type: "object",
     properties: {
       path: { type: "string", description: "File path to modify." },
-      start_line: { type: "integer", description: "PREFERRED: 1-based start line of the block to replace." },
-      end_line: { type: "integer", description: "PREFERRED: 1-based end line (inclusive) of the block to replace." },
+      start_line: { type: "integer", description: "FALLBACK: 1-based start line of the block to replace. MUST read_file first — line numbers go stale after every patch." },
+      end_line: { type: "integer", description: "FALLBACK: 1-based end line (inclusive) of the block to replace. MUST read_file first — line numbers go stale after every patch." },
       new_content: { type: "string", description: "The replacement content (used with start_line/end_line)." },
-      find_string: { type: "string", description: "FALLBACK: Exact text to find (include surrounding context for uniqueness)." },
-      replace_string: { type: "string", description: "FALLBACK: Text to replace find_string with." }
+      find_string: { type: "string", description: "PREFERRED: Exact text to find (include surrounding context for uniqueness). Immune to line-number drift." },
+      replace_string: { type: "string", description: "PREFERRED: Text to replace find_string with. Immune to line-number drift." }
     },
     required: ["path"]
   },
