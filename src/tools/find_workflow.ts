@@ -5,7 +5,7 @@ const os = require('os');
 
 module.exports = {
   name: "find_workflow",
-  description: "Searches for workflow files in global (~/.ds_config/workflows/) and project-specific directories (./workflows, ./.workflows, ./.github/workflows, ./ds_config/workflows). Accepts a query string (minimum 3 characters) and returns matching workflows as JSON array.",
+  description: "Searches for workflow files in the global ~/.ds_config/workflows/ directory. Accepts a query string (minimum 3 characters) and returns matching workflows as JSON array.",
   parameters: {
     type: "object",
     properties: {
@@ -33,7 +33,6 @@ module.exports = {
       path.join(projectRoot, 'workflows'),
       path.join(projectRoot, '.workflows'),
       path.join(projectRoot, '.github', 'workflows'),
-      path.join(projectRoot, 'ds_config', 'workflows') // backward compatibility
     ];
 
     const processDirectory = (dirPath) => {

@@ -5,7 +5,7 @@ const os = require('os');
 
 module.exports = {
   name: 'get_workflow_content',
-  description: 'Retrieves the full content of a workflow file by its ID (filename without .md extension). Searches in project-specific directories (./workflows, ./.workflows, ./.github/workflows, ./ds_config/workflows) first, then in the global ~/.ds_config/workflows/ directory.',
+  description: 'Retrieves the full content of a workflow file by its ID (filename without .md extension). Searches project-specific directories (./workflows, ./.workflows, ./.github/workflows) first, then the global ~/.ds_config/workflows/ directory.',
   parameters: {
     type: 'object',
     properties: {
@@ -32,7 +32,6 @@ module.exports = {
       path.join(projectRoot, 'workflows'),
       path.join(projectRoot, '.workflows'),
       path.join(projectRoot, '.github', 'workflows'),
-      path.join(projectRoot, 'ds_config', 'workflows') // backward compatibility
     ];
     const globalWorkflowsDir = path.join(os.homedir(), '.ds_config', 'workflows');
     const filename = `${safeId}.md`;

@@ -492,7 +492,7 @@ You are the Lead Engineer. DO the work the user asked for. Read, write, patch, r
 
 ## 3. Small-Task Protocol (fewer than 5 files)
 - If the task involves <5 files, you SHOULD:
-  - Call find_workflow("small task") and get_workflow_content to load ds_config/workflows/small-task.md
+  - Call find_workflow("small task") and get_workflow_content to load the workflow
   - Follow its steps: snapshot, read all files, plan, execute one change, verify, loop.
   - If you cannot find the workflow, fall back to the atomic change + test loop above.
 

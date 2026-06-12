@@ -231,7 +231,7 @@ tui.input.on("submit", async (val) => {
   if (val === "/list-workflows") {
     const logItems = tui.getLogItems();
     const globalDir = path.join(os.homedir(), ".ds_config", "workflows");
-    const localDir = path.join(process.cwd(), "ds_config", "workflows");
+    const localDir = null;
 
     let output = "## Installed Workflows\n\n";
     const listDir = (dir, label) => {
@@ -248,7 +248,6 @@ tui.input.on("submit", async (val) => {
       output += "\n";
     };
     listDir(globalDir, "Global");
-    listDir(localDir, "Local (project)");
 
     if (output === "## Installed Workflows\n\n") {
       output += "No workflows installed.\n";

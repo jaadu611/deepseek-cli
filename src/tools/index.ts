@@ -192,7 +192,6 @@ function buildBaseScaffolding(userPrompt) {
   try {
     const cwd = process.cwd();
     const globalConfig = path.join(os.homedir(), '.ds_config', 'workflows');
-    const localConfig = path.join(cwd, 'ds_config', 'workflows');
 
     const rules = [];
     let projectDependencies = "";
@@ -228,7 +227,6 @@ function buildBaseScaffolding(userPrompt) {
     };
 
     checkAndLoad(globalConfig, true);
-    checkAndLoad(localConfig, false);
 
     if (rules.length > 0) {
       dynamicRulesContext = `\n\n[Dynamic Workflows / Context]\n${rules.join('\n\n')}`;
@@ -398,7 +396,6 @@ Read these files at the start of each task, update them as each step progresses,
 # DYNAMIC VERIFICATION (WORKFLOW-BASED)
 Verification of code changes (syntax, compilation, tests) is **not hardcoded**. Instead, the system will automatically load and execute dynamic workflows from:
 - \`~/.ds_config/workflows/\` (global)
-- \`ds_config/workflows/\` (project-specific)
 
 After any file modification, the system checks for workflow files (\`.md\` files) that match the detected project language (based on \`package.json\`, \`go.mod\`, \`Cargo.toml\`, \`requirements.txt\`, etc.). If a matching workflow exists, its instructions are executed. If no workflow matches, a basic syntax check is performed using the appropriate interpreter.
 
@@ -439,7 +436,6 @@ function getSubAgentSystemPrompt(userPrompt, agentNumber = 1) {
   try {
     const cwd = process.cwd();
     const globalConfig = path.join(os.homedir(), '.ds_config', 'workflows');
-    const localConfig = path.join(cwd, 'ds_config', 'workflows');
 
     const rules = [];
     let projectDependencies = "";
@@ -475,7 +471,6 @@ function getSubAgentSystemPrompt(userPrompt, agentNumber = 1) {
     };
 
     checkAndLoad(globalConfig, true);
-    checkAndLoad(localConfig, false);
 
     if (rules.length > 0) {
       dynamicRulesContext = `\n\n[Dynamic Workflows / Context]\n${rules.join('\n\n')}`;

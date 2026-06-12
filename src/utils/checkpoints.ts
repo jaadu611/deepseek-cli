@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
 
-const CHECKPOINTS_DIR = path.join(process.cwd(), 'ds_config', 'checkpoints');
+const CHECKPOINTS_DIR = path.join(require('os').homedir(), '.ds_config', 'checkpoints');
 
 let lastRevertedCheckpoint = null;
 

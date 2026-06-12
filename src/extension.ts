@@ -240,7 +240,6 @@ class DeepSeekChatProvider implements vscode.WebviewViewProvider {
             const logItems = tui.getLogItems();
             const os = require("os");
             const globalDir = path.join(os.homedir(), ".ds_config", "workflows");
-            const localDir = path.join(process.cwd(), "ds_config", "workflows");
 
             let output = "## Installed Workflows\n\n";
             const listDir = (dir: string, label: string) => {
@@ -258,7 +257,6 @@ class DeepSeekChatProvider implements vscode.WebviewViewProvider {
               output += "\n";
             };
             listDir(globalDir, "Global");
-            listDir(localDir, "Local");
             
             if (output === "## Installed Workflows\n\n") {
               output += "No workflows found in global or local directories.";
