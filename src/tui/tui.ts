@@ -582,7 +582,7 @@ function askConfirmation(message, callback) {
   });
 }
 
-module.exports = {
+export = {
   scr,
   topBar,
   chat,

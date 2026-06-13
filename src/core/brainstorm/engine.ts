@@ -4,9 +4,9 @@
 // Uses the same browser page (single chat session)
 // ─────────────────────────────────────────────────────────────────────────────
 
-import tui from '../../tui/tui';
-import brainRegistry from '../brains/registry';
-import { createSession, saveMessage, setCurrentSessionId, updateSessionTitle, getCurrentSessionId } from '../history';
+const tui = require('../../tui/tui');
+const brainRegistry = require('../brains/registry');
+const { createSession, saveMessage, setCurrentSessionId, updateSessionTitle, getCurrentSessionId } = require('../history');
 import {
   LEVEL1_INFRASTRUCTURE,
   LEVEL1_SECURITY,
@@ -48,12 +48,6 @@ function updateSpinningItem(logItems: any[], item: any, thinking: string, text: 
   tui.renderLog();
 }
 
-function removeStatusByIndex(logItems: any[], idx: number) {
-  if (idx >= 0 && idx < logItems.length) {
-    logItems.splice(idx, 1);
-    tui.renderLog();
-  }
-}
 
 function removeSpinningItem(logItems: any[], item: any) {
   const idx = logItems.indexOf(item);

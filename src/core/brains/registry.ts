@@ -48,4 +48,4 @@ class BrainRegistry {
 }
 
 // Singleton registry instance
-module.exports = new BrainRegistry();
+export = new BrainRegistry();
