@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <style>
     :root {
       --font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
@@ -263,6 +264,15 @@
       background-color: var(--vscode-textCodeBlock-background, #2d2d2d);
       padding: 1px 4px;
       border-radius: 3px;
+    }
+
+    blockquote {
+      margin: 8px 0;
+      padding: 4px 12px;
+      border-left: 4px solid var(--deepseek-blue);
+      background-color: var(--vscode-textCodeBlock-background, #2d2d2d);
+      color: var(--vscode-descriptionForeground, #cccccc);
+      font-style: italic;
     }
 
     /* Checkpoint Card */
@@ -866,10 +876,11 @@
             <path d="M4.2 6L8 10.2 11.8 6H4.2z"/>
           </svg>
         </div>
-        <div class="custom-dropdown-menu hidden" id="modeMenu">
+          <div class="custom-dropdown-menu hidden" id="modeMenu">
           <div class="custom-dropdown-item active" onclick="selectMode('act')">Act Mode</div>
           <div class="custom-dropdown-item" onclick="selectMode('plan')">Plan Mode</div>
           <div class="custom-dropdown-item" onclick="selectMode('auto')">Auto Mode</div>
+          <div class="custom-dropdown-item" onclick="selectMode('brainstorm')">Brainstorm Mode</div>
         </div>
       </div>
       <div class="custom-dropdown" id="browserDropdownWrapper" tabindex="0">
@@ -987,129 +998,38 @@
       }
     });
 
-    // Client-side markdown helper
+    // Client-side markdown renderer using marked (battle-tested library)
+    // Custom renderer for code blocks to match our existing UI
+    marked.use({
+      renderer: {
+        code({ text, lang }) {
+          const langStr = lang || "code";
+          const escapedCode = text
+            .replace(/&/g, "&" + "amp;")
+            .replace(/</g, "&" + "lt;")
+            .replace(/>/g, "&" + "gt;");
+          return `
+            <div class="code-block-container">
+              <div class="code-block-header">
+                <span class="code-block-lang">${langStr}</span>
+                <button class="code-block-copy-btn" onclick="navigator.clipboard.writeText(this.closest('.code-block-container').querySelector('code').textContent); this.textContent='Copied!'; setTimeout(() => this.textContent='Copy', 2000)">Copy</button>
+              </div>
+              <pre class="code-block"><code class="language-${langStr}">${escapedCode}</code></pre>
+            </div>
+          `;
+        },
+        codespan({ text }) {
+          return `<code class="inline-code">${text}</code>`;
+        },
+        table({ header, body }) {
+          return `<div class="table-container"><table><thead>${header}</thead><tbody>${body}</tbody></table></div>`;
+        }
+      }
+    });
+
     function markdownToHtml(text) {
       if (!text) return "";
-
-      // Escape HTML
-      let html = text
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;");
-
-      const placeholders = {};
-      let placeholderCounter = 0;
-
-      // 1. Code blocks extraction
-      html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (match, lang, code) => {
-        const cleanLang = lang ? lang.trim() : "code";
-        const placeholderId = `__CODE_BLOCK_${placeholderCounter++}__`;
-        placeholders[placeholderId] = `
-          <div class="code-block-container">
-            <div class="code-block-header">
-              <span class="code-block-lang">${cleanLang}</span>
-              <button class="code-block-copy-btn" onclick="navigator.clipboard.writeText(this.closest('.code-block-container').querySelector('code').textContent); this.textContent='Copied!'; setTimeout(() => this.textContent='Copy', 2000)">Copy</button>
-            </div>
-            <pre class="code-block"><code class="language-${cleanLang}">${code.trim()}</code></pre>
-          </div>
-        `;
-        return placeholderId;
-      });
-
-      // Inline formatter for table cells & general text
-      function formatInline(str) {
-        let val = str;
-        // Inline code
-        val = val.replace(/`([^`\n]+)`/g, '<code class="inline-code">$1</code>');
-        // Bold
-        val = val.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-        // Italic
-        val = val.replace(/\*([^*]+)\*/g, '<em>$1</em>');
-        return val;
-      }
-
-      // 2. Table parsing
-      const lines = html.split("\n");
-      let inTable = false;
-      let tableRows = [];
-      const newLines = [];
-
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
-        const trimmed = line.trim();
-        const isTableRow = trimmed.startsWith("|") && trimmed.endsWith("|");
-
-        if (isTableRow) {
-          if (!inTable) {
-            inTable = true;
-            tableRows = [];
-          }
-          tableRows.push(trimmed);
-        } else {
-          if (inTable) {
-            const placeholderId = `__TABLE_${placeholderCounter++}__`;
-            placeholders[placeholderId] = renderTable(tableRows);
-            newLines.push(placeholderId);
-            inTable = false;
-          }
-          newLines.push(line);
-        }
-      }
-      if (inTable) {
-        const placeholderId = `__TABLE_${placeholderCounter++}__`;
-        placeholders[placeholderId] = renderTable(tableRows);
-        newLines.push(placeholderId);
-      }
-
-      html = newLines.join("\n");
-
-      function renderTable(rows) {
-        if (rows.length < 2) return rows.join("\n");
-        const separatorRow = rows[1];
-        const isSeparator = /^\|[\s-:|]*\|$/.test(separatorRow);
-        if (!isSeparator) return rows.join("\n");
-
-        const headerCells = rows[0].split("|").slice(1, -1).map(c => c.trim());
-        let tHtml = '<div class="table-container"><table><thead><tr>';
-        headerCells.forEach(cell => {
-          tHtml += `<th>${formatInline(cell)}</th>`;
-        });
-        tHtml += '</tr></thead><tbody>';
-
-        for (let i = 2; i < rows.length; i++) {
-          const bodyCells = rows[i].split("|").slice(1, -1).map(c => c.trim());
-          tHtml += '<tr>';
-          for (let j = 0; j < headerCells.length; j++) {
-            const cellVal = bodyCells[j] !== undefined ? bodyCells[j] : "";
-            tHtml += `<td>${formatInline(cellVal)}</td>`;
-          }
-          tHtml += '</tr>';
-        }
-        tHtml += '</tbody></table></div>';
-        return tHtml;
-      }
-
-      // 3. Headings
-      html = html.replace(/^### (.*$)/gim, '<h3>$1</h3>');
-      html = html.replace(/^## (.*$)/gim, '<h2>$1</h2>');
-      html = html.replace(/^# (.*$)/gim, '<h1>$1</h1>');
-
-      // 4. Lists
-      html = html.replace(/^\s*[-*+]\s+(.*$)/gim, '<ul><li>$1</li></ul>');
-      html = html.replace(/<\/ul>\s*<ul>/g, '');
-
-      // 5. General inline markdown
-      html = formatInline(html);
-
-      // 6. Paragraphs
-      html = html.replace(/\n\n/g, '<br/>');
-
-      // 7. Restore placeholders
-      Object.keys(placeholders).forEach(placeholderId => {
-        html = html.replace(placeholderId, placeholders[placeholderId]);
-      });
-
-      return html;
+      return marked.parse(text);
     }
 
     // Toggle Chat History panel
@@ -1136,6 +1056,7 @@
       let display = "Act Mode";
       if (mode === "plan") display = "Plan Mode";
       if (mode === "auto") display = "Auto Mode";
+      if (mode === "brainstorm") display = "Brainstorm Mode";
       
       document.getElementById("currentModeDisplay").textContent = display;
       

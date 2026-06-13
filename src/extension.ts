@@ -49,6 +49,35 @@ async function handlePrompt(text: string, webviewView: vscode.WebviewView) {
   }
 }
 
+async function handleBrainstorm(text: string, webviewView: vscode.WebviewView) {
+  orchestrator.setBusy(true);
+  try {
+    const { runBrainstormPipeline } = require('./core/brainstorm/engine');
+    
+    // Create a new chat session for brainstorm
+    const { createSession: createHistorySession, setCurrentSessionId: setHistorySessionId, updateSessionTitle } = require('./core/history');
+    const ns = createHistorySession('Brainstorm: ' + text.slice(0, 40));
+    setHistorySessionId(ns.id);
+    tui.setTopBarTitle('Brainstorm: ' + text.slice(0, 60));
+    
+    // Save user message
+    const logItems = tui.getLogItems();
+    logItems.push({ type: 'user', text });
+    saveMessage(ns.id, 'user', text);
+    tui.renderLog();
+    
+    tui.setAutoScroll(true);
+    
+    await runBrainstormPipeline(text);
+  } catch (err: any) {
+    const logItems = tui.getLogItems();
+    logItems.push({ type: 'error', message: `Brainstorm failed: ${err.message}` });
+    tui.renderLog();
+  } finally {
+    orchestrator.setBusy(false);
+  }
+}
+
 
 export function activate(context: vscode.ExtensionContext) {
   // Set working directory to VSCode workspace folder if available
@@ -134,6 +163,14 @@ class DeepSeekChatProvider implements vscode.WebviewViewProvider {
               text === '/list-workflows') {
             // Original handling continues below after this block
           } else {
+            // Check if brainstorm mode is active
+            const currentMode = tui.getModeBadge();
+            if (currentMode === 'brainstorm') {
+              // Route to brainstorm engine (no queue, no parallelism)
+              if (orchestrator.isBusy()) return;
+              await handleBrainstorm(text, webviewView);
+              break;
+            }
             // Regular prompt: queue if busy, else process immediately
             if (orchestrator.isBusy()) {
               promptQueue.push(text);
@@ -279,6 +316,28 @@ class DeepSeekChatProvider implements vscode.WebviewViewProvider {
           tools.setMode(data.mode);
           tui.setModeBadge(data.mode);
           tui.renderLog();
+          
+          // When switching to brainstorm mode, automatically create a new chat
+          if (data.mode === 'brainstorm' && !orchestrator.isBusy()) {
+            tui.setLogItems([]);
+            setCurrentSessionId(null);
+            const brain = brainRegistry.getActiveBrain();
+            if (brain && typeof brain.onSessionLoad === 'function') {
+              orchestrator.setBusy(true);
+              const switchItem = { type: 'status', text: 'opening new chat for brainstorm session...' };
+              tui.getLogItems().push(switchItem);
+              tui.startGlobalSpinner();
+              tui.renderLog();
+              try {
+                await brain.onSessionLoad(null);
+              } catch (e) {}
+              const idx = tui.getLogItems().indexOf(switchItem);
+              if (idx !== -1) tui.getLogItems().splice(idx, 1);
+              tui.stopGlobalSpinner();
+              tui.renderLog();
+              orchestrator.setBusy(false);
+            }
+          }
           break;
         }
 

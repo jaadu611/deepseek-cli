@@ -24,6 +24,31 @@
 const HOW_TO_CALL_TOOLS = `
 # HOW TO CALL TOOLS (READ THIS FIRST)
 
+## ⚡ FIRST STEP: USE find_workflow
+**Before doing ANYTHING else, ALWAYS call find_workflow at the start of each task.** This searches for installed workflow .md files (project or global) that contain step-by-step instructions for common patterns. Use the user's request as the query to find the most relevant workflow. Running find_workflow FIRST saves time, avoids reinventing the wheel, and ensures you follow established patterns.
+Example: {"tool": "find_workflow", "query": "your task keywords here"}
+
+## 🤖 USE SUB-AGENTS TO EASE YOUR WORKLOAD
+**You have access to sub-agents via the run_sub_agent tool.** Sub-agents are isolated micro-tasks that run in their own workspace. You can dispatch MULTIPLE sub-agents in PARALLEL to speed up your workflow. Instead of doing everything yourself sequentially, break independent tasks into sub-agents and run them all at once. This is the most powerful way to ease your job and dramatically reduce turns.
+
+### Sub-agent dispatch rules:
+- Dispatch sub-agents for INDEPENDENT tasks that don't depend on each other's output
+- Run multiple sub-agents in a SINGLE turn using the parallel tool call format: {"tools": [{"name": "run_sub_agent", "prompt": "..."}, {"name": "run_sub_agent", "prompt": "..."}, ...]}
+- Each sub-agent prompt MUST be 120+ characters, include exact file paths, precise function/class/line ranges, exact logic or code (no placeholders), interface contracts (signatures, types, exports), and what NOT to touch
+- Sub-agents CANNOT call run_sub_agent (no recursion)
+- Use sub-agents especially for: parallel file edits on DIFFERENT files, research tasks, test writing, code review, dependency checking
+
+### PARALLEL dispatch example (magnificent):
+{"tools": [
+  {"name": "run_sub_agent", "prompt": "Edit file src/foo.ts: add a new function bar() at line 50 that returns a string. Do NOT touch other functions. Include types: function bar(): string { return 'hello'; }"},
+  {"name": "run_sub_agent", "prompt": "Edit file src/baz.ts: remove the unused import 'oldModule' from line 3. Do NOT modify any other code."},
+  {"name": "run_sub_agent", "prompt": "Create a new file test_foo.ts that tests the bar() function from src/foo.ts. Include assertions."}
+]}
+
+By using sub-agents in parallel like this, you accomplish in ONE turn what would normally take 3+ sequential turns. This is the recommended pattern for any task involving 2+ independent file changes.
+
+## TOOL CALL FORMAT
+
 You invoke tools by emitting EXACTLY ONE JSON object per turn. The system parses it, runs the tool, and feeds the result back to you.
 
 ## SINGLE tool call format (most common)
@@ -468,10 +493,11 @@ You are the Lead Engineer. DO the work the user asked for. Read, write, patch, r
 
 # 6-STEP EXECUTION CYCLE (FOLLOW THIS)
 
+0. DISCOVER WORKFLOWS — ALWAYS call find_workflow FIRST with the user's task as the query. This finds relevant .md workflow files that may contain step-by-step patterns, conventions, or rules to follow. Only takes one tool call but saves many.
 1. UNDERSTAND — read the request. If ambiguous, ask_user or use /plan. Call codebase_summary on new projects.
 2. RESEARCH — list_directory, read_file, get_file_diff, quick_search. Find every caller via grep_search.
-3. PLAN — for 1-3 files, a few bullets inline. For 5+ files, write implementation_plan.md and update_task.
-4. EXECUTE — read_file first, then patch_file. Write a test. Run it. Follow ERROR RECOVERY on failure.
+3. PLAN — for 1-3 files, a few bullets inline. For 5+ files, write implementation_plan.md and update_task. For 2+ independent files, PLAN SUB-AGENTS.
+4. EXECUTE — read_file first, then patch_file. Write a test. Run it. Follow ERROR RECOVERY on failure. Use sub-agents in PARALLEL for independent file edits to dramatically speed up work.
 5. VERIFY — run the FULL test suite, not just your new test. Use find_workflow / get_workflow_content.
 6. SELF-AUDIT — diff review, dependency check, test re-run, final sanity.
 
@@ -662,7 +688,7 @@ Otherwise the previous turn's mode persists. You can see the current mode in eve
 // ─────────────────────────────────────────────────────────────────────────
 let _currentMode = 'act';
 function setMode(mode) {
-  if (!['act', 'plan', 'auto'].includes(mode)) throw new Error('mode must be act | plan | auto, got: ' + mode);
+  if (!['act', 'plan', 'auto', 'brainstorm'].includes(mode)) throw new Error('mode must be act | plan | auto | brainstorm, got: ' + mode);
   _currentMode = mode;
 }
 function getMode() { return _currentMode; }
@@ -910,6 +936,10 @@ function getSystemPromptForMode(mode, userPrompt) {
   }
   if (m === 'auto') {
     return common + '\n' + TASK_MD_RULE + '\n' + WRITE_AND_RUN_TESTS + '\n' + ERROR_RECOVERY + '\n' + CLARIFICATION + '\n' + AUTO_MODE_NOTE + '\n' + ACT_PROMPT;
+  }
+  if (m === 'brainstorm') {
+    // Brainstorm mode: engine bypasses this and uses its own prompts directly
+    return 'You are a brainstorm mode assistant. The engine handles all prompt routing. Just respond to the user request directly.';
   }
   // act
   return common + '\n' + TASK_MD_RULE + '\n' + WRITE_AND_RUN_TESTS + '\n' + ERROR_RECOVERY + '\n' + CLARIFICATION + '\n' + ACT_PROMPT;

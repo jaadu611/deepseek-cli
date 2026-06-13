@@ -39,4 +39,10 @@ copyRecursiveSync(
   path.join(__dirname, 'dist', 'src', 'mcp', 'installed_servers')
 );
 
+// Copy brainstorm engine and prompts (plain .js files, not compiled by tsc)
+copyRecursiveSync(
+  path.join(__dirname, 'src', 'core', 'brainstorm'),
+  path.join(__dirname, 'dist', 'src', 'core', 'brainstorm')
+);
+
 console.log('Static assets copied to dist/ successfully.');
