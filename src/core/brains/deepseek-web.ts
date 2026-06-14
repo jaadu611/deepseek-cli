@@ -234,8 +234,7 @@ class DeepSeekWebBrain extends BaseBrain {
     const spawnArgs = [
       "--remote-debugging-port=9222",
       `--user-data-dir=${profilePath}`,
-      `--user-agent=${userAgent}`,
-      "--disable-blink-features=AutomationControlled"
+      `--user-agent=${userAgent}`
     ];
 
     if (config.headless) {
@@ -580,33 +579,16 @@ class DeepSeekWebBrain extends BaseBrain {
       }
 
       const IDLE_TIMEOUT_MS = 12000000;
-      // FIX: Increased idle threshold from 3s to 30s. DeepSeek thinking mode
-      // legitimately pauses for 10-30s between thinking chunks on long prompts.
-      // A 3s threshold caused false "stopped prematurely" detection, reloading
-      // the page and losing all progress.
-      const PREMATURE_IDLE_THRESHOLD_MS = 30000;
+      // FIX: Removed PREMATURE_IDLE_THRESHOLD_MS entirely. DeepSeek thinking mode
+      // can pause for minutes between chunks. Any idle-based stop detection causes
+      // false failures that reload the page and open new empty chat tabs.
+      // The only timeout is IDLE_TIMEOUT_MS (3.3 hours) for truly dead streams.
       let lastDataTime = Date.now();
       let lastLen = 0;
       let stoppedPrematurely = false;
 
       const checkDone = () => {
         if (state.streamDone) return true;
-
-        if (firstChunkSeen && Date.now() - lastDataTime > PREMATURE_IDLE_THRESHOLD_MS) {
-          const thinkSoFar = state.thinkingChunks.join("");
-          const respSoFar = state.responseChunks.join("");
-
-          const hasJson = respSoFar.includes("{") || thinkSoFar.includes("{");
-          if (hasJson) {
-            if (hasCompleteJSON(respSoFar) || hasCompleteJSON(thinkSoFar)) {
-              state.streamDone = true;
-              return true;
-            }
-          }
-
-          stoppedPrematurely = true;
-          return true;
-        }
 
         if (
           (state.thinkingChunks.length || state.responseChunks.length) &&
@@ -657,9 +639,36 @@ class DeepSeekWebBrain extends BaseBrain {
       }
 
       if (stoppedPrematurely) {
+        if (state.streamBuffer.trim()) this.processNetworkChunk(activePage, "\n");
+        const thinkSoFar = state.thinkingChunks.join("");
+        const respSoFar = state.responseChunks.join("");
+        const totalLen = thinkSoFar.length + respSoFar.length;
+
+        // FIX: If we already have substantial response data (500+ chars), return it
+        // instead of destroying the page with a reload. The generation was likely
+        // complete or nearly complete — the stream just didn't send a proper FINISHED
+        // signal. Reloading causes "new empty chat tab" and loses all context.
+        if (totalLen > 500) {
+          require("fs").appendFileSync(
+            "/tmp/deepseek-cli-debug.log",
+            `[Brain] Attempt ${attempt} stopped prematurely but has ${totalLen} chars of data. Returning partial result instead of retrying.\n`
+          );
+          if (thinkSoFar && state.thinkingStartTime) state.thinkingEndTime = Date.now();
+          if (onProgress) {
+            onProgress({
+              thinking: thinkSoFar,
+              text: respSoFar,
+              thinkingStartTime: state.thinkingStartTime,
+              thinkingEndTime: state.thinkingEndTime,
+            });
+          }
+          return { thinkingText: thinkSoFar, responseText: respSoFar };
+        }
+
+        // Only reload and retry if we got almost nothing
         require("fs").appendFileSync(
           "/tmp/deepseek-cli-debug.log",
-          `[Brain] Attempt ${attempt} stopped prematurely (no data for ${PREMATURE_IDLE_THRESHOLD_MS / 1000}s and incomplete final blocks). Reloading and retrying same prompt...\n`
+          `[Brain] Attempt ${attempt} stopped prematurely with only ${totalLen} chars. Reloading and retrying...\n`
         );
         await activePage.reload().catch(() => { });
         await new Promise((r) => setTimeout(r, 3000));

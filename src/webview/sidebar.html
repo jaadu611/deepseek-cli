@@ -1279,6 +1279,30 @@
           document.getElementById("sendBtn").disabled = message.active;
           document.getElementById("promptInput").disabled = message.active;
           break;
+        case "brainstormRetryReady":
+          {
+            const sendBtn = document.getElementById("sendBtn");
+            const promptInput = document.getElementById("promptInput");
+            const retryPrompt = message.userMessage || '';
+            if (sendBtn) {
+              sendBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 3a5 5 0 0 0-4.546 2.916.5.5 0 0 1-.908-.418A6 6 0 1 1 8 14v-1a.5.5 0 0 1 1 0v1a7 7 0 1 0-7-7a.5.5 0 0 1 1 0 6 6 0 0 1 6-6zM8 4.5V8l2.25 1.5"/></svg>';
+              sendBtn.style.backgroundColor = "#d97706";
+              sendBtn.title = "Retry Brainstorm";
+              sendBtn.onclick = function() {
+                sendBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M1.01 14l13.92-6L1.01 2v4.86L10.5 8l-9.49 1.14z"/></svg>';
+                sendBtn.style.backgroundColor = "";
+                sendBtn.title = "";
+                sendBtn.onclick = function() { submitMessage(); };
+                vscode.postMessage({ command: "retryBrainstorm", text: retryPrompt });
+              };
+            }
+            if (promptInput && retryPrompt) {
+              promptInput.value = retryPrompt;
+              promptInput.style.height = "auto";
+              promptInput.style.height = Math.min(promptInput.scrollHeight, 120) + "px";
+            }
+          }
+          break;
         case "historyList":
           renderHistoryList(message.sessions);
           break;

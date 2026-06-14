@@ -72,6 +72,47 @@ async function handleBrainstorm(text: string, webviewView: vscode.WebviewView) {
   } catch (err: any) {
     const logItems = tui.getLogItems();
     logItems.push({ type: 'error', message: `Brainstorm failed: ${err.message}` });
+    
+    // Save pipeline state on failure for retry
+    try {
+      const { findLatestPipelineState } = require('./core/brainstorm/engine');
+      const state = findLatestPipelineState();
+      if (state) {
+        logItems.push({ 
+          type: 'status', 
+          text: `⚠️ Pipeline state saved for retry (Level: ${state.level}, Step: ${state.step})` 
+        });
+        // Post retry state to webview
+        if (webviewView) {
+          webviewView.webview.postMessage({
+            command: 'brainstormRetryReady',
+            state: {
+              userPrompt: state.userPrompt,
+              evidenceDir: state.evidenceDir,
+              level: state.level,
+              step: state.step,
+            },
+            userMessage: text,
+          });
+        }
+      } else {
+        // No pipeline state found, just save the user prompt for retry
+        if (webviewView) {
+          webviewView.webview.postMessage({
+            command: 'brainstormRetryReady',
+            state: null,
+            userMessage: text,
+          });
+        }
+      }
+    } catch (stateErr) {
+      // Don't let state saving errors crash the UI
+      fs.appendFileSync(
+        "/tmp/deepseek-cli-debug.log",
+        `[extension] Failed to save pipeline state: ${stateErr}\n`
+      );
+    }
+    
     tui.renderLog();
   } finally {
     orchestrator.setBusy(false);
@@ -484,6 +525,14 @@ class DeepSeekChatProvider implements vscode.WebviewViewProvider {
 
         case 'askConfirmationResponse': {
           tui.handleConfirmationResponse(data.confirmed);
+          break;
+        }
+
+        case 'retryBrainstorm': {
+          if (orchestrator.isBusy()) return;
+          const retryText = data.text || '';
+          if (!retryText) return;
+          await handleBrainstorm(retryText, webviewView);
           break;
         }
 

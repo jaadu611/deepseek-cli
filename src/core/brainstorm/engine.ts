@@ -144,6 +144,80 @@ function clearCheckpoint(evidenceDir: string) {
   }
 }
 
+// ── Pipeline state for crash recovery ────────────────────────────────────────
+
+interface PipelineState {
+  userPrompt: string;
+  evidenceDir: string;
+  level: string; // 'L0' | 'L1' | 'L2' | 'L3' | 'destructive' | 'final'
+  step: string;  // sub-step within level, e.g. 'market', 'critique', 'foreman'
+  loopCount?: number;
+  loopStep?: string;
+  // Completed outputs (loaded from evidence files on resume)
+  research?: string;
+  l1Market?: string;
+  l1Feasibility?: string;
+  l1Reality?: string;
+  l2Critique?: string;
+  l2Review?: string;
+  l2Consensus?: string;
+  l3Plan?: string;
+  plan?: string;
+  previousIssues?: string[];
+  timestamp: number;
+}
+
+const PIPELINE_STATE_FILE = '_pipeline_state.json';
+
+function savePipelineState(state: PipelineState) {
+  const filePath = path.join(state.evidenceDir, PIPELINE_STATE_FILE);
+  fs.writeFileSync(filePath, JSON.stringify(state, null, 2), 'utf8');
+}
+
+function loadPipelineState(evidenceDir: string): PipelineState | null {
+  const filePath = path.join(evidenceDir, PIPELINE_STATE_FILE);
+  if (!fs.existsSync(filePath)) return null;
+  try {
+    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function clearPipelineState(evidenceDir: string) {
+  const filePath = path.join(evidenceDir, PIPELINE_STATE_FILE);
+  if (fs.existsSync(filePath)) {
+    fs.unlinkSync(filePath);
+  }
+}
+
+function loadEvidenceIfExists(evidenceDir: string, filename: string): string {
+  const filePath = path.join(evidenceDir, filename);
+  if (!fs.existsSync(filePath)) return '';
+  try {
+    return fs.readFileSync(filePath, 'utf8').trim();
+  } catch {
+    return '';
+  }
+}
+
+// Returns the latest pipeline state file from any brainstorm evidence folder
+export function findLatestPipelineState(): PipelineState | null {
+  const brainstormDir = path.join(os.homedir(), '.ds_config', 'brainstorm_evidence');
+  if (!fs.existsSync(brainstormDir)) return null;
+  
+  const dirs = fs.readdirSync(brainstormDir)
+    .filter(d => fs.statSync(path.join(brainstormDir, d)).isDirectory())
+    .sort()
+    .reverse();
+  
+  for (const dir of dirs) {
+    const state = loadPipelineState(path.join(brainstormDir, dir));
+    if (state) return state;
+  }
+  return null;
+}
+
 const MAX_CALL_RETRIES = 3;
 const RETRY_DELAY_MS = 5000;
 
@@ -251,10 +325,24 @@ export async function runBrainstormPipeline(userPrompt: string): Promise<string>
 
   // FIX: Run L1 analysts in parallel — they are fully independent.
   // Use Promise.allSettled so one tab's failure doesn't kill the whole pipeline.
+  // Each analyst also gets engine-level retries via retryCallBrain (3 attempts),
+  // in addition to the internal 5 retries within getCompletionStream.
   const l1Results = await Promise.allSettled([
-    callBrainOnPage(tabA, LEVEL1_MARKET(userPrompt, research), STATUS_MESSAGES.L1_MARKET as string),
-    callBrainOnPage(tabB, LEVEL1_FEASIBILITY(userPrompt, research), STATUS_MESSAGES.L1_FEASIBILITY as string),
-    callBrainOnPage(tabC, LEVEL1_REALITY_CHECK(userPrompt, research), STATUS_MESSAGES.L1_REALITY as string),
+    retryCallBrain(
+      () => callBrainOnPage(tabA, LEVEL1_MARKET(userPrompt, research), STATUS_MESSAGES.L1_MARKET as string),
+      logItems,
+      STATUS_MESSAGES.L1_MARKET as string,
+    ),
+    retryCallBrain(
+      () => callBrainOnPage(tabB, LEVEL1_FEASIBILITY(userPrompt, research), STATUS_MESSAGES.L1_FEASIBILITY as string),
+      logItems,
+      STATUS_MESSAGES.L1_FEASIBILITY as string,
+    ),
+    retryCallBrain(
+      () => callBrainOnPage(tabC, LEVEL1_REALITY_CHECK(userPrompt, research), STATUS_MESSAGES.L1_REALITY as string),
+      logItems,
+      STATUS_MESSAGES.L1_REALITY as string,
+    ),
   ]);
 
   const l1Market = l1Results[0].status === 'fulfilled' ? l1Results[0].value : '';
@@ -273,6 +361,9 @@ export async function runBrainstormPipeline(userPrompt: string): Promise<string>
   saveEvidence(evidenceDir, '03_level1_feasibility.md', l1Feasibility);
   saveEvidence(evidenceDir, '04_level1_reality_check.md', l1Reality);
   addStatus(logItems, STATUS_MESSAGES.L1_DONE as string);
+
+  // Save pipeline state for crash recovery
+  savePipelineState({ userPrompt, evidenceDir, level: 'L2', step: 'critique', research, l1Market, l1Feasibility, l1Reality, timestamp: Date.now() });
 
   // ════════════════════════════════════════════════════════════════════════════
   // LEVEL 2: Three Jury Models — REUSE Level 1's 3 tabs
@@ -345,7 +436,7 @@ export async function runBrainstormPipeline(userPrompt: string): Promise<string>
   // FIX: plan starts from l3Plan, not '' — so a resumed run also benefits
   let plan = l3Plan;
   let loopCount = 0;
-  let maxLoops = 70;
+  let maxLoops = Infinity;
   let previousIssues: string[] = [];
   let ductCritique = '';
   let ductReview = '';
@@ -368,7 +459,7 @@ export async function runBrainstormPipeline(userPrompt: string): Promise<string>
     addStatus(logItems, `📂 Resuming destructive loop from Loop #${existingCheckpoint.loopCount}, step: ${resumeStep}`);
   }
 
-  while (loopCount < maxLoops) {
+  while (true) {
     loopCount++;
     addStatus(logItems, (STATUS_MESSAGES.DESTRUCT_START as (n: number) => string)(loopCount));
 
@@ -473,10 +564,6 @@ export async function runBrainstormPipeline(userPrompt: string): Promise<string>
   try { await (destructTabC as any).close?.(); } catch {}
 
   clearCheckpoint(evidenceDir);
-
-  if (loopCount >= maxLoops) {
-    addStatus(logItems, `⚠️ Destructive loop completed ${maxLoops} iterations. Proceeding with current plan.`);
-  }
 
   // Save the final refined plan from the destructive loop
   saveEvidence(evidenceDir, '12_final_refined_plan.md', plan);
