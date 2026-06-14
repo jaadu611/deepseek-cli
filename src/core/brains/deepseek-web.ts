@@ -17,6 +17,7 @@ class DeepSeekWebBrain extends BaseBrain {
     this.launchingBrowser = false;
 
     this.pageStates = new WeakMap();
+    this.humanVerificationHandled = new WeakSet();
   }
 
   static get id() {
@@ -276,6 +277,26 @@ class DeepSeekWebBrain extends BaseBrain {
     throw new Error("Chromium CDP port did not open in time");
   }
 
+  async handleHumanVerification(page) {
+    if (this.humanVerificationHandled.has(page)) return;
+    const hasHumanCheck = await page.evaluate(() => {
+      const bodyText = document.body.innerText;
+      const patterns = [
+        "Let's confirm you are human",
+        "Complete the security check",
+        "verify that you are not a bot",
+        "security check before continuing"
+      ];
+      return patterns.some(p => bodyText.includes(p));
+    });
+    if (hasHumanCheck) {
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      this.humanVerificationHandled.add(page);
+      await new Promise(r => setTimeout(r, 1000));
+    }
+    this.humanVerificationHandled.add(page);
+  }
+
   async getPage() {
     if (this.page) {
       try {
@@ -293,11 +314,13 @@ class DeepSeekWebBrain extends BaseBrain {
       if (!page) {
         page = await this.context.newPage();
         await this.setupInterceptors(page);
-        page.goto("https://chat.deepseek.com/").catch(() => { });
+        await page.goto("https://chat.deepseek.com/").catch(() => { });
       } else {
         await this.setupInterceptors(page);
+        await this.handleHumanVerification(page);
       }
       this.page = page;
+      await this.handleHumanVerification(this.page);
       this.initializing = null;
       return page;
     })();
