@@ -12,7 +12,7 @@
     "AI",
     "Chat"
   ],
-  "activationEvents": [],
+  "activationEvents": ["onView:deepseek-cli-sidebar"],
   "contributes": {
     "viewsContainers": {
       "activitybar": [
