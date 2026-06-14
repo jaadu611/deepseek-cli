@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
-  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/markdown-it@14.1.0/dist/markdown-it.min.js"></script>
   <style>
     :root {
       --font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
@@ -998,38 +998,56 @@
       }
     });
 
-    // Client-side markdown renderer using marked (battle-tested library)
-    // Custom renderer for code blocks to match our existing UI
-    marked.use({
-      renderer: {
-        code({ text, lang }) {
-          const langStr = lang || "code";
-          const escapedCode = text
-            .replace(/&/g, "&" + "amp;")
-            .replace(/</g, "&" + "lt;")
-            .replace(/>/g, "&" + "gt;");
-          return `
-            <div class="code-block-container">
-              <div class="code-block-header">
-                <span class="code-block-lang">${langStr}</span>
-                <button class="code-block-copy-btn" onclick="navigator.clipboard.writeText(this.closest('.code-block-container').querySelector('code').textContent); this.textContent='Copied!'; setTimeout(() => this.textContent='Copy', 2000)">Copy</button>
-              </div>
-              <pre class="code-block"><code class="language-${langStr}">${escapedCode}</code></pre>
-            </div>
-          `;
-        },
-        codespan({ text }) {
-          return `<code class="inline-code">${text}</code>`;
-        },
-        table({ header, body }) {
-          return `<div class="table-container"><table><thead>${header}</thead><tbody>${body}</tbody></table></div>`;
-        }
-      }
+    // Client-side markdown renderer using markdown-it (well-maintained, excellent GFM table support)
+    const md = window.markdownit({
+      html: true,
+      linkify: true,
+      typographer: false,
+      breaks: false,
     });
+
+    // Custom fence rule for code blocks with copy button
+    const defaultFenceRenderer = md.renderer.rules.fence.bind(md.renderer.rules);
+    md.renderer.rules.fence = function (tokens, idx, options, env, self) {
+      const token = tokens[idx];
+      const langStr = token.info.trim() || "code";
+      const escapedCode = token.content
+        .replace(/&/g, "&" + "amp;")
+        .replace(/</g, "&" + "lt;")
+        .replace(/>/g, "&" + "gt;");
+      return `
+        <div class="code-block-container">
+          <div class="code-block-header">
+            <span class="code-block-lang">${langStr}</span>
+            <button class="code-block-copy-btn" onclick="navigator.clipboard.writeText(this.closest('.code-block-container').querySelector('code').textContent); this.textContent='Copied!'; setTimeout(() => this.textContent='Copy', 2000)">Copy</button>
+          </div>
+          <pre class="code-block"><code class="language-${langStr}">${escapedCode}</code></pre>
+        </div>
+      `;
+    };
+
+    // Custom inline code rule
+    const defaultInlineCodeRenderer = md.renderer.rules.code_inline;
+    md.renderer.rules.code_inline = function (tokens, idx, options, env, self) {
+      const content = tokens[idx].content
+        .replace(/&/g, "&" + "amp;")
+        .replace(/</g, "&" + "lt;")
+        .replace(/>/g, "&" + "gt;");
+      return `<code class="inline-code">${content}</code>`;
+    };
+
+    // Custom table renderer to wrap in .table-container
+    const defaultTableRenderer = md.renderer.rules.table_open;
+    md.renderer.rules.table_open = function (tokens, idx, options, env, self) {
+      return '<div class="table-container"><table>';
+    };
+    md.renderer.rules.table_close = function (tokens, idx, options, env, self) {
+      return '</table></div>';
+    };
 
     function markdownToHtml(text) {
       if (!text) return "";
-      return marked.parse(text);
+      return md.render(text);
     }
 
     // Toggle Chat History panel

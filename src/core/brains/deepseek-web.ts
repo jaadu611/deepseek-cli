@@ -412,6 +412,11 @@ class DeepSeekWebBrain extends BaseBrain {
   }
 
   async submitPrompt(page, prompt, options = {}) {
+    // CRITICAL: Bring this tab to front before interacting
+    // Without this, prompts go to the wrong tab when multiple tabs are open
+    try { await page.bringToFront(); } catch (e) { }
+    await new Promise(r => setTimeout(r, 200));
+
     const textarea = page.locator("textarea").first();
     await textarea.waitFor({ state: "visible", timeout: 10000 });
     await page.waitForFunction(
@@ -515,6 +520,21 @@ class DeepSeekWebBrain extends BaseBrain {
     let attempt = 0;
     const maxAttempts = 5;
 
+    // CRITICAL: Bring the target tab to front before any operations
+    // This prevents all prompts from going to the wrong tab when multiple tabs are open
+    try { await activePage.bringToFront(); } catch (e) { }
+    await new Promise(r => setTimeout(r, 300));
+
+    // Verify the page is still alive
+    try { await activePage.evaluate("1"); } catch (e) {
+      require("fs").appendFileSync(
+        "/tmp/deepseek-cli-debug.log",
+        `[Brain] getCompletionStream: page appears dead, reloading...\n`
+      );
+      await activePage.reload().catch(() => { });
+      await new Promise(r => setTimeout(r, 2000));
+    }
+
     while (attempt < maxAttempts) {
       attempt++;
       // Reset state
@@ -528,6 +548,11 @@ class DeepSeekWebBrain extends BaseBrain {
       state.thinkingEndTime = null;
 
       await this.setupInterceptors(activePage);
+
+      // Bring to front again before submit (browser may have switched)
+      try { await activePage.bringToFront(); } catch (e) { }
+      await new Promise(r => setTimeout(r, 150));
+
       await this.submitPrompt(activePage, prompt, options);
 
       // Wait for first chunk
@@ -555,6 +580,11 @@ class DeepSeekWebBrain extends BaseBrain {
       }
 
       const IDLE_TIMEOUT_MS = 12000000;
+      // FIX: Increased idle threshold from 3s to 30s. DeepSeek thinking mode
+      // legitimately pauses for 10-30s between thinking chunks on long prompts.
+      // A 3s threshold caused false "stopped prematurely" detection, reloading
+      // the page and losing all progress.
+      const PREMATURE_IDLE_THRESHOLD_MS = 30000;
       let lastDataTime = Date.now();
       let lastLen = 0;
       let stoppedPrematurely = false;
@@ -562,7 +592,7 @@ class DeepSeekWebBrain extends BaseBrain {
       const checkDone = () => {
         if (state.streamDone) return true;
 
-        if (firstChunkSeen && Date.now() - lastDataTime > 3000) {
+        if (firstChunkSeen && Date.now() - lastDataTime > PREMATURE_IDLE_THRESHOLD_MS) {
           const thinkSoFar = state.thinkingChunks.join("");
           const respSoFar = state.responseChunks.join("");
 
@@ -629,7 +659,7 @@ class DeepSeekWebBrain extends BaseBrain {
       if (stoppedPrematurely) {
         require("fs").appendFileSync(
           "/tmp/deepseek-cli-debug.log",
-          `[Brain] Attempt ${attempt} stopped prematurely (no data for 3s and incomplete final blocks). Reloading and retrying same prompt...\n`
+          `[Brain] Attempt ${attempt} stopped prematurely (no data for ${PREMATURE_IDLE_THRESHOLD_MS / 1000}s and incomplete final blocks). Reloading and retrying same prompt...\n`
         );
         await activePage.reload().catch(() => { });
         await new Promise((r) => setTimeout(r, 3000));

@@ -1409,6 +1409,9 @@ async function ask(prompt, options = {}) {
         let toolResult = "";
         if (checkToolLoop(toolName, toolParams)) {
           toolResult = `❌ Loop detected: Identical tool call was repeated 3 times consecutively. Aborting execution to prevent infinite looping.`;
+        } else if (modePrompts.canCallToolInBrainstormMode && modePrompts.canCallToolInBrainstormMode(toolName).allowed === false) {
+          // BRAINSTORM MODE: block ALL coding tools — brainstorm is a research-only pipeline
+          toolResult = modePrompts.canCallToolInBrainstormMode(toolName).reason + '\n\n(You MUST reply in valid JSON.)';
         } else if (modePrompts.canCallToolInPlanMode(toolName, toolParams).allowed === false) {
           // PLAN MODE: block any tool that's not allowed in the current mode
           toolResult = modePrompts.canCallToolInPlanMode(toolName, toolParams).reason + '\n\n(You MUST reply in valid JSON.)';

@@ -994,6 +994,38 @@ function canCallToolInPlanMode(toolName, params) {
   return { allowed: true };
 }
 
+// ── BRAINSTORM MODE: Block ALL tools ────────────────────────────────────────
+// Brainstorm mode is a research-only pipeline. It calls the AI model directly
+// via the brainstorm engine and does NOT use any of the 38 coding tools.
+// If the orchestrator somehow tries to execute a tool during brainstorm mode,
+// block it immediately.
+
+const BRAINSTORM_BLOCKED_TOOLS = new Set([
+  'write_file', 'patch_file', 'patch_multiple_files', 'restore_file',
+  'execute_shell_command', 'git_operation', 'run_tests',
+  'read_file', 'list_directory', 'file_info', 'glob_search', 'grep_search',
+  'quick_search', 'get_file_diff', 'get_recent_errors',
+  'lint_code', 'repo_map',
+  'find_references', 'go_to_definition', 'get_symbol_info',
+  'lsp_diagnostics', 'lsp_hover', 'lsp_find_references', 'lsp_rename',
+  'write_scratch_file', 'read_scratch_file', 'list_scratch_files',
+  'update_task', 'update_project_memory', 'ask_user',
+  'snapshot_state', 'restore_to_snapshot',
+  'run_sub_agent', 'search_tool_registry',
+  'find_workflow', 'get_workflow_content',
+  'codebase_summary',
+]);
+
+function canCallToolInBrainstormMode(toolName) {
+  if (_currentMode !== 'brainstorm') {
+    return { allowed: true };
+  }
+  if (BRAINSTORM_BLOCKED_TOOLS.has(toolName)) {
+    return { allowed: false, reason: '[BLOCKED] ' + toolName + ' is blocked in brainstorm mode. Brainstorm is a research pipeline — it does not use coding tools. Type /act to switch to execution mode.' };
+  }
+  return { allowed: true };
+}
+
 module.exports = {
   HOW_TO_CALL_TOOLS,
   TOOL_CATALOG,
@@ -1017,9 +1049,11 @@ module.exports = {
   getPlanModePrompt,
   getActModePrompt,
   canCallToolInPlanMode,
+  canCallToolInBrainstormMode,
   isShellCommandReadOnly,
   PLAN_MODE_BLOCKED_TOOLS,
   PLAN_MODE_RESTRICTED_TOOLS,
+  BRAINSTORM_BLOCKED_TOOLS,
   // exposed for tests / debugging
   ACT_SIGNALS,
   PLAN_SIGNALS,
