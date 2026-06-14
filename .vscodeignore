@@ -13,6 +13,8 @@ ds_config/
 .gitignore
 .vscode/
 
-# Ensure necessary files are included
+# Ignore devDependencies (vsce handles this via --skip-require or npm prune)
+# But KEEP production node_modules
+!node_modules/**
 !dist/**
 !public/**
