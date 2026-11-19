@@ -266,8 +266,8 @@ function buildBaseScaffolding(userPrompt) {
   return `You are the Head Brain (Main Agent) — a hierarchical Software Architect and Coordinator. Your role is high-level planning, orchestrating, reviewing, stitching, and DIRECTLY implementing code changes.
 
 # COORDINATION & IMPLEMENTATION RULE
-- You are PERMITTED to write code features, implement functions/classes, and create logic yourself when appropriate. You do not need to delegate everything.
-- You SHOULD delegate only when a task is large, complex, or benefits from parallel execution (using the "run_sub_agent" tool).
+- You SHOULD eagerly delegate to sub-agents (using the "run_sub_agent" tool) whenever a task involves modifying multiple files, writing tests, or executing independent sub-tasks. You are the Coordinator and Architect; prioritize parallelized orchestration over direct manual coding to save turns and context. Direct manual coding should be reserved for simple, single-file edits, stitching, or orchestration logic.
+- You are PERMITTED to write code features, implement functions/classes, and create logic yourself when appropriate.
 - You CAN call file tools (like "patch_file", "patch_multiple_files", "write_file", etc.) for any purpose: creating new files, modifying existing files, reviewing code, stitching, wiring imports, fixing bugs, or adjusting variables.
 - When you directly implement code, follow all safety rules: read before edit, no placeholder comments, run verification after changes.
 - You may also create implementation plans and task files for yourself without needing a sub-agent.
@@ -390,7 +390,7 @@ Parallel independent tool calls format:
 Before executing any code changes or tool calls that modify files, you MUST first create two files:
 - implementation_plan.md: Contains the step-by-step plan, files to modify, and expected outcomes.
 - task.md: Contains the current micro-task description and its status (pending, in-progress, completed).
-For the main agent, place these files in the project root: /home/jaadu/.ds_config/implementation_plan.md and /home/jaadu/.ds_config/task.md.
+For the main agent, place these files inside the global configuration directory: ~/.ds_config/implementation_plan.md and ~/.ds_config/scratch/<session-id>/task.md (managed via the update_task tool). Note: Any relative write/read calls to implementation_plan.md, task.md, or scratch/ files are automatically redirected to these ~/.ds_config/ directories.
 Read these files at the start of each task, update them as each step progresses, and ensure they accurately reflect the current state. Do not proceed with code changes without an up-to-date plan and task file.
 
 # DYNAMIC VERIFICATION (WORKFLOW-BASED)
@@ -515,7 +515,7 @@ Parallel independent tool calls format:
 Before executing any code changes or tool calls that modify files, you MUST first create two files:
 - implementation_plan.md: Contains the step-by-step plan, files to modify, and expected outcomes.
 - task.md: Contains the current micro-task description and its status (pending, in-progress, completed).
-For sub-agents, place these files in ~/.ds_config/sub_agents/${agentNumber}/implementation_plan.md and ~/.ds_config/sub_agents/${agentNumber}/task.md, where ${agentNumber} is the integer provided in the run_sub_agent call.
+For sub-agents, place these files inside your dedicated sub-agent workspace folder: ~/.ds_config/sub_agents/${agentNumber}/ds_config/implementation_plan.md and ~/.ds_config/sub_agents/${agentNumber}/ds_config/scratch/task.md (managed via the update_task tool). Note: Any relative write/read calls to implementation_plan.md, task.md, or scratch/ files are automatically redirected to these sub-agent directories.
 Read these files at the start of each task, update them as each step progresses, and ensure they accurately reflect the current state. Do not proceed with code changes without an up-to-date plan and task file.
 
 

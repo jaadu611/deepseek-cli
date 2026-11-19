@@ -100,14 +100,19 @@ async function startServer(serverType) {
       env: { ...process.env, NODE_NO_WARNINGS: '1' },
     });
 
+    let serverStderr = '';
     server.stderr.on('data', (data) => {
-      // Language server logs (ignore)
+      const chunk = data.toString();
+      serverStderr += chunk;
+      checkAndHandlePrompt(serverType, server, command + ' ' + args.join(' '), serverStderr);
     });
 
     stdoutBuffers[serverType] = '';
 
     server.stdout.on('data', (data) => {
-      stdoutBuffers[serverType] += data.toString();
+      const chunk = data.toString();
+      stdoutBuffers[serverType] += chunk;
+      checkAndHandlePrompt(serverType, server, command + ' ' + args.join(' '), chunk);
       processMessages(serverType);
     });
 
@@ -147,6 +152,10 @@ async function startServer(serverType) {
         resolve(activeServers[serverType]);
       })
       .catch((err) => {
+        if (server.process) {
+          try { server.process.kill(); } catch {}
+        }
+        delete activeServers[serverType];
         reject(err);
       });
   });
@@ -219,17 +228,21 @@ function sendNotification(serverType, method, params) {
  * Process buffered messages from stdout
  */
 function processMessages(serverType) {
-  const buffer = stdoutBuffers[serverType];
-  if (!buffer) return;
-
   while (true) {
+    const buffer = stdoutBuffers[serverType];
+    if (!buffer) break;
+
     // Look for Content-Length header
     const headerEnd = buffer.indexOf('\r\n\r\n');
     if (headerEnd === -1) break;
 
     const header = buffer.substring(0, headerEnd);
     const match = header.match(/Content-Length:\s*(\d+)/);
-    if (!match) break;
+    if (!match) {
+      // Discard this non-header block to prevent buffer hang
+      stdoutBuffers[serverType] = buffer.substring(headerEnd + 4);
+      continue;
+    }
 
     const contentLength = parseInt(match[1], 10);
     const messageStart = headerEnd + 4;
@@ -609,6 +622,82 @@ module.exports = {
 };
 
 // Cleanup on process exit
+const PROMPT_PATTERNS = [
+  /\b(ok to proceed|ok\?|continue\?|proceed\?|want to continue\?)\s*\(?\[?y\/n\]?\)?/i,
+  /\[y\/n\]/i,
+  /\(y\/n\)/i,
+  /ok to proceed\? \([yn]\)/i,
+  /\bselect\s+(an?\s+)?option\s*:/i,
+  /\bselect\s+a\s+number\s*:/i,
+  /\benter\s+(selection|option|choice)\s*:/i,
+  /\b(press|hit)\s+\[?enter\]?\s+to\s+continue/i,
+];
+
+const respondedPrompts = new Set();
+
+function checkAndHandlePrompt(serverType, server, fullCommand, text) {
+  if (activeServers[serverType] && activeServers[serverType].initialized) return;
+
+  const lines = text.trim().split('\n');
+  const lastLine = lines[lines.length - 1] || '';
+
+  let isPrompt = false;
+  for (const pattern of PROMPT_PATTERNS) {
+    if (pattern.test(lastLine)) {
+      isPrompt = true;
+      break;
+    }
+  }
+
+  if (!isPrompt && lastLine.includes('?') && (lastLine.toLowerCase().includes('y/n') || lastLine.toLowerCase().includes('(y/') || lastLine.toLowerCase().includes('[y/'))) {
+    isPrompt = true;
+  }
+
+  if (isPrompt) {
+    const promptKey = `${serverType}:${lastLine.trim()}`;
+    if (respondedPrompts.has(promptKey)) return;
+    respondedPrompts.add(promptKey);
+
+    const tui = require('../tui/tui');
+    const logItems = tui.getLogItems();
+    logItems.push({ type: 'status', text: `[LSP Server Prompt] Z.ai is choosing how to proceed...` });
+    tui.renderLog();
+
+    getResponseFromAI(fullCommand, text).then((answer) => {
+      try {
+        server.stdin.write(answer + '\n');
+      } catch (e) {}
+    });
+  }
+}
+
+async function getResponseFromAI(command, promptText) {
+  try {
+    const brainRegistry = require('../core/brains/registry');
+    const brain = brainRegistry.getActiveBrain();
+    if (!brain || typeof brain.getCompletionStream !== 'function') {
+      return 'y';
+    }
+
+    const tempPage = await brain.createNewPage();
+    if (!tempPage) return 'y';
+
+    const aiPrompt = `A terminal command is currently executing and is waiting for user input.\n\n` +
+      `Command being run: \`${command}\`\n` +
+      `Terminal output prompting for input:\n` +
+      `"""\n${promptText.trim()}\n"""\n\n` +
+      `How should we respond to this prompt to proceed successfully? Choose the best answer (typically 'y' or '1' or 'yes').\n` +
+      `Respond with ONLY the exact characters to write to the terminal stdin, and absolutely nothing else. No quotes, no markdown, no newlines.`;
+
+    const result = await brain.getCompletionStream(aiPrompt, { page: tempPage, webSearch: false });
+    const answer = (result.responseText || 'y').trim().replace(/['"`]/g, '');
+    await tempPage.close().catch(() => {});
+    return answer;
+  } catch (err) {
+    return 'y';
+  }
+}
+
 process.on('exit', () => {
   stopAllServers();
 });

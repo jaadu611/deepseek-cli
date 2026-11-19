@@ -39,7 +39,20 @@
     "watch": "npm run copy-assets && tsc -w",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "keywords": [],
+  "keywords": [
+    "deepseek",
+    "deepseek-r1",
+    "vscode-extension",
+    "ai-coding-assistant",
+    "agentic-ai",
+    "autonomous-agents",
+    "playwright",
+    "glm",
+    "sub-agents",
+    "mcp",
+    "language-server-protocol",
+    "developer-tools"
+  ],
   "author": "",
   "license": "MIT",
   "type": "commonjs",

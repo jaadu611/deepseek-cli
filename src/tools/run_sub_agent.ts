@@ -235,9 +235,9 @@ module.exports = {
     required: ["agentNumber", "prompt"]
   },
   async execute({ agentNumber, model, name, prompt }) {
-    const brain = brainRegistry.getActiveBrain();
+    const brain = brainRegistry.getSubAgentBrain();
     if (!brain) {
-      return "Error: No active brain found to run sub-agent.";
+      return "Error: No active sub-agent brain found.";
     }
 
     const { tools, getSubAgentSystemPrompt, normalizeToolCall } = require("./index");

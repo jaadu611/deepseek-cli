@@ -5,7 +5,7 @@
 <h1 align="center">DeepSeek Chat -- VS Code Extension</h1>
 
 <p align="center">
-  <strong>An AI-powered coding assistant that communicates with DeepSeek AI via a headless browser and wields 38+ built-in tools for file exploration, surgical code editing, shell execution, git operations, language server integration, and more.</strong>
+  <strong>An AI-powered coding assistant and agentic harness that communicates with DeepSeek R1/V3 & GLM 5.2 via browser automation, equipped with 38+ built-in tools for file exploration, surgical code editing, shell execution, git operations, language server integration, and sub-agent orchestration.</strong>
 </p>
 
 <p align="center">
@@ -22,7 +22,7 @@
 
 ## Overview
 
-DeepSeek Chat is a VS Code sidebar extension that gives you an AI-powered coding agent integrated directly into your editor. The agent communicates with DeepSeek AI through a headless browser and provides access to 38+ tools for file exploration, editing, shell execution, code intelligence, LSP, git, memory, workflows, and more.
+DeepSeek Chat is an agentic coding assistant and VS Code sidebar extension that brings web-scale AI models directly into your development workflow without requiring expensive API keys. The agent connects to DeepSeek AI and GLM 5.2 (Z.ai) through automated Chromium CDP sessions, providing 38+ built-in tools for AST code exploration, surgical diff-based editing, shell execution with AI interactive stdin resolution, language server protocol (LSP) intelligence, git workflows, isolated sub-agents, and automated verification guardrails.
 
 ### How It Works
 

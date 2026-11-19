@@ -113,19 +113,70 @@
       color: var(--vscode-list-activeSelectionForeground, #ffffff);
     }
 
+    .dropdown-section-header {
+      padding: 4px 10px 2px 10px;
+      font-size: 9px;
+      font-weight: 600;
+      text-transform: uppercase;
+      color: var(--vscode-descriptionForeground, #858585);
+      letter-spacing: 0.5px;
+    }
+    .dropdown-divider {
+      height: 1px;
+      background-color: var(--vscode-sideBar-border, #2b2b2b);
+      margin: 4px 0;
+    }
+
     /* Queue Bar */
     .queue-bar {
       padding: 6px 12px;
-      font-size: 12px;
+      font-size: 11px;
       color: var(--vscode-descriptionForeground, #858585);
       background-color: var(--vscode-editorWidget-background, #252526);
       border-bottom: 1px solid var(--vscode-sideBar-border, #2b2b2b);
-      white-space: nowrap;
+      display: flex;
+      align-items: center;
+      gap: 6px;
       overflow-x: auto;
       scrollbar-width: none;
     }
     .queue-bar::-webkit-scrollbar {
       display: none;
+    }
+
+    .queue-item {
+      display: inline-flex;
+      align-items: center;
+      background-color: var(--vscode-textCodeBlock-background, #2d2d2d);
+      border: 1px solid var(--vscode-sideBar-border, #454545);
+      border-radius: 4px;
+      padding: 2px 6px;
+      gap: 4px;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    .queue-item-text {
+      max-width: 120px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .queue-item-delete {
+      cursor: pointer;
+      color: var(--vscode-errorForeground, #f48771);
+      font-weight: bold;
+      font-size: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+    }
+
+    .queue-item-delete:hover {
+      background-color: rgba(244, 135, 113, 0.2);
     }
 
     .icon-btn {
@@ -197,17 +248,18 @@
       color: var(--vscode-sideBar-foreground, #cccccc);
     }
 
-    .ai-content h1, .ai-content h2, .ai-content h3 {
+    .ai-content h1, .ai-content h2, .ai-content h3, .ai-content h4, .ai-content h5, .ai-content h6,
+    .thinking-content h1, .thinking-content h2, .thinking-content h3, .thinking-content h4, .thinking-content h5, .thinking-content h6 {
       margin: 4px 0 2px 0;
     }
-    .ai-content p {
+    .ai-content p, .thinking-content p {
       margin: 2px 0;
     }
-    .ai-content ul, .ai-content ol {
+    .ai-content ul, .ai-content ol, .thinking-content ul, .thinking-content ol {
       margin: 2px 0;
       padding-left: 16px;
     }
-    .ai-content li {
+    .ai-content li, .thinking-content li {
       margin: 1px 0;
     }
 
@@ -242,19 +294,9 @@
       font-size: 12px;
       color: var(--vscode-descriptionForeground, #a0a0a0);
       margin-top: 2px;
-      white-space: pre-wrap;
     }
 
     /* Markdown Elements */
-    pre.code-block {
-      background-color: var(--vscode-textCodeBlock-background, #2d2d2d);
-      border: 1px solid var(--vscode-sideBar-border, #2b2b2b);
-      border-radius: 4px;
-      padding: 6px;
-      overflow-x: auto;
-      margin: 6px 0;
-    }
-
     code {
       font-family: 'Courier New', Courier, monospace;
       font-size: 11px;
@@ -319,7 +361,7 @@
 
     /* Beautiful Code Block Containers */
     .code-block-container {
-      margin: 6px 0;
+      margin: 4px 0;
       border: 1px solid var(--vscode-sideBar-border, #2b2b2b);
       border-radius: 6px;
       overflow: hidden;
@@ -328,7 +370,7 @@
 
     .code-block-header {
       background-color: var(--vscode-sideBar-background, #252526);
-      padding: 4px 8px;
+      padding: 3px 6px;
       display: flex;
       justify-content: space-between;
       align-items: center;
@@ -362,7 +404,7 @@
       margin: 0 !important;
       border: none !important;
       border-radius: 0 !important;
-      padding: 8px;
+      padding: 4px 8px 8px 8px !important;
       overflow-x: auto;
       background-color: transparent !important;
     }
@@ -869,24 +911,50 @@
       DeepSeek
     </div>
     <div class="header-actions">
-      <div class="custom-dropdown" id="modeDropdownWrapper" tabindex="0">
-        <div class="custom-dropdown-selected" onclick="toggleModeMenu()">
-          <span id="currentModeDisplay">Act Mode</span>
-          <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor">
+      <!-- Models Dropdown -->
+      <div class="custom-dropdown" id="modelsDropdownWrapper" tabindex="0">
+        <div class="custom-dropdown-selected" onclick="toggleModelsMenu()" title="Select Models">
+          <span id="modelsSelect">DS / DS</span>
+          <svg width="8" height="8" viewBox="0 0 16 16" fill="currentColor" style="opacity: 0.8; margin-left: 2px;">
             <path d="M4.2 6L8 10.2 11.8 6H4.2z"/>
           </svg>
         </div>
-          <div class="custom-dropdown-menu hidden" id="modeMenu">
+        <div class="custom-dropdown-menu hidden" id="modelsMenu" style="min-width: 155px;">
+          <div class="dropdown-section-header">Main Brain</div>
+          <div class="custom-dropdown-item active" id="mainBrain-deepseek-web" onclick="selectMainBrain('deepseek-web')">DeepSeek</div>
+          <div class="custom-dropdown-item" id="mainBrain-glm-web" onclick="selectMainBrain('glm-web')">GLM 5.2 (Z.ai)</div>
+          
+          <div class="dropdown-divider"></div>
+          
+          <div class="dropdown-section-header">Sub Agent</div>
+          <div class="custom-dropdown-item active" id="subBrain-deepseek-web" onclick="selectSubBrain('deepseek-web')">DeepSeek</div>
+          <div class="custom-dropdown-item" id="subBrain-glm-web" onclick="selectSubBrain('glm-web')">GLM 5.2 (Z.ai)</div>
+        </div>
+      </div>
+
+      <!-- Mode Dropdown -->
+      <div class="custom-dropdown" id="modeDropdownWrapper" tabindex="0">
+        <div class="custom-dropdown-selected" onclick="toggleModeMenu()">
+          <span id="modeSelect">Act</span>
+          <svg width="8" height="8" viewBox="0 0 16 16" fill="currentColor" style="opacity: 0.8; margin-left: 2px;">
+            <path d="M4.2 6L8 10.2 11.8 6H4.2z"/>
+          </svg>
+        </div>
+        <div class="custom-dropdown-menu hidden" id="modeMenu">
           <div class="custom-dropdown-item active" onclick="selectMode('act')">Act Mode</div>
           <div class="custom-dropdown-item" onclick="selectMode('plan')">Plan Mode</div>
           <div class="custom-dropdown-item" onclick="selectMode('auto')">Auto Mode</div>
           <div class="custom-dropdown-item" onclick="selectMode('brainstorm')">Brainstorm Mode</div>
         </div>
       </div>
+
+      <!-- Browser Dropdown -->
       <div class="custom-dropdown" id="browserDropdownWrapper" tabindex="0">
-        <div class="custom-dropdown-selected" onclick="toggleBrowserMenu()">
-          <span>Browser</span>
-          <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor">
+        <div class="custom-dropdown-selected" onclick="toggleBrowserMenu()" title="Browser Settings">
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" style="opacity: 0.85; margin-right: 2px;">
+            <path d="M8 1a7 7 0 0 0-7 7 7 7 0 0 0 7 7 7 7 0 0 0 7-7 7 7 0 0 0-7-7zm0 1.1a5.9 5.9 0 0 1 2.3 4.9H5.7A5.9 5.9 0 0 1 8 2.1zM2.1 8a5.9 5.9 0 0 1 2.5-4.8c-.4.9-.7 2-1 3.3h-1.5zm0 1.5h1.5c.3 1.3.6 2.4 1 3.3A5.9 5.9 0 0 1 2.1 9.5zm3.6 0h4.6a7.2 7.2 0 0 1-.5 2.5 7.2 7.2 0 0 1-.5-2.5zm0-1.5h4.6a7.2 7.2 0 0 0-.5-2.5 7.2 7.2 0 0 0-.5 2.5z"/>
+          </svg>
+          <svg width="8" height="8" viewBox="0 0 16 16" fill="currentColor" style="opacity: 0.8;">
             <path d="M4.2 6L8 10.2 11.8 6H4.2z"/>
           </svg>
         </div>
@@ -895,6 +963,7 @@
           <div class="custom-dropdown-item" onclick="restartBrowserOption()">Restart Browser</div>
         </div>
       </div>
+
       <button id="historyBtn" class="icon-btn" onclick="toggleHistory()" title="View History">
         <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
           <path d="M8.5 2C11.58 2 14 4.42 14 7.5c0 2.85-2.2 5.18-5 5.45v-1.01c2.28-.26 4-2.21 4-4.44C13 5.02 10.98 3 8.5 3c-1.33 0-2.52.58-3.35 1.5L6.5 6H2V1.5l1.83 1.83C4.85 2.37 6.6 2 8.5 2zm-1 3v3h3V7h-2V5h-1z"/>
@@ -980,6 +1049,7 @@
 
   <script>
     const vscode = acquireVsCodeApi();
+    vscode.postMessage({ command: "ready" });
 
     // Queue UI handler
     window.addEventListener('message', (event) => {
@@ -988,12 +1058,38 @@
         const queueBar = document.getElementById('queueBar');
         const queue = data.queue;
         if (queue && queue.length > 0) {
-          const truncated = queue.map(p => p.length > 40 ? p.slice(0,37) + '...' : p).join(', ');
-          queueBar.textContent = `queued: ${truncated}`;
-          queueBar.style.display = 'block';
+          queueBar.innerHTML = '';
+          const label = document.createElement('span');
+          label.style.marginRight = '4px';
+          label.style.fontWeight = '600';
+          label.textContent = 'Queued:';
+          queueBar.appendChild(label);
+
+          queue.forEach((prompt, idx) => {
+            const item = document.createElement('div');
+            item.className = 'queue-item';
+
+            const textSpan = document.createElement('span');
+            textSpan.className = 'queue-item-text';
+            textSpan.textContent = prompt.length > 30 ? prompt.slice(0, 27) + '...' : prompt;
+            textSpan.title = prompt;
+
+            const deleteCross = document.createElement('span');
+            deleteCross.className = 'queue-item-delete';
+            deleteCross.textContent = '×';
+            deleteCross.onclick = (e) => {
+              e.stopPropagation();
+              vscode.postMessage({ command: 'deleteQueueItem', index: idx });
+            };
+
+            item.appendChild(textSpan);
+            item.appendChild(deleteCross);
+            queueBar.appendChild(item);
+          });
+          queueBar.style.display = 'flex';
         } else {
           queueBar.style.display = 'none';
-          queueBar.textContent = '';
+          queueBar.innerHTML = '';
         }
       }
     });
@@ -1011,19 +1107,18 @@
     md.renderer.rules.fence = function (tokens, idx, options, env, self) {
       const token = tokens[idx];
       const langStr = token.info.trim() || "code";
-      const escapedCode = token.content
+      let codeText = token.content;
+      while (codeText.startsWith('\n')) {
+        codeText = codeText.slice(1);
+      }
+      while (codeText.endsWith('\n')) {
+        codeText = codeText.slice(0, -1);
+      }
+      const escapedCode = codeText
         .replace(/&/g, "&" + "amp;")
         .replace(/</g, "&" + "lt;")
         .replace(/>/g, "&" + "gt;");
-      return `
-        <div class="code-block-container">
-          <div class="code-block-header">
-            <span class="code-block-lang">${langStr}</span>
-            <button class="code-block-copy-btn" onclick="navigator.clipboard.writeText(this.closest('.code-block-container').querySelector('code').textContent); this.textContent='Copied!'; setTimeout(() => this.textContent='Copy', 2000)">Copy</button>
-          </div>
-          <pre class="code-block"><code class="language-${langStr}">${escapedCode}</code></pre>
-        </div>
-      `;
+      return `<div class="code-block-container"><div class="code-block-header"><span class="code-block-lang">${langStr}</span><button class="code-block-copy-btn" onclick="navigator.clipboard.writeText(this.closest('.code-block-container').querySelector('code').textContent); this.textContent='Copied!'; setTimeout(() => this.textContent='Copy', 2000)">Copy</button></div><pre class="code-block"><code class="language-${langStr}">${escapedCode}</code></pre></div>`;
     };
 
     // Custom inline code rule
@@ -1068,29 +1163,71 @@
     function toggleModeMenu() {
       const menu = document.getElementById("modeMenu");
       menu.classList.toggle("hidden");
+      document.getElementById("brainMenu").classList.add("hidden");
+      document.getElementById("browserMenu").classList.add("hidden");
     }
 
     function selectMode(mode) {
-      let display = "Act Mode";
-      if (mode === "plan") display = "Plan Mode";
-      if (mode === "auto") display = "Auto Mode";
-      if (mode === "brainstorm") display = "Brainstorm Mode";
-      
-      document.getElementById("currentModeDisplay").textContent = display;
+      vscode.postMessage({ command: "setMode", mode: mode });
+      const shortLabels = {
+        act: "Act",
+        plan: "Plan",
+        auto: "Auto",
+        brainstorm: "Brainstorm"
+      };
+      document.getElementById("modeSelect").textContent = shortLabels[mode] || mode;
+      document.getElementById("modeMenu").classList.add("hidden");
       
       const items = document.querySelectorAll("#modeMenu .custom-dropdown-item");
-      items.forEach(el => {
-        el.classList.remove("active");
-        if (el.textContent === display) el.classList.add("active");
-      });
-      
+      items.forEach(el => el.classList.remove("active"));
+      if (event && event.currentTarget) {
+        event.currentTarget.classList.add("active");
+      }
+    }
+
+    let selectedMainBrain = 'deepseek-web';
+    let selectedSubBrain = 'deepseek-web';
+
+    function updateModelsLabel() {
+      const mainShort = selectedMainBrain === 'glm-web' ? 'GLM' : 'DS';
+      const subShort = selectedSubBrain === 'glm-web' ? 'GLM' : 'DS';
+      document.getElementById("modelsSelect").textContent = `M:${mainShort} / S:${subShort}`;
+    }
+
+    function toggleModelsMenu() {
+      const menu = document.getElementById("modelsMenu");
+      menu.classList.toggle("hidden");
       document.getElementById("modeMenu").classList.add("hidden");
-      vscode.postMessage({ command: "changeMode", mode: mode });
+      document.getElementById("browserMenu").classList.add("hidden");
+    }
+
+    function selectMainBrain(brainId) {
+      selectedMainBrain = brainId;
+      vscode.postMessage({ command: "setBrain", brainId: brainId });
+      updateModelsLabel();
+      document.getElementById("modelsMenu").classList.add("hidden");
+      
+      const items = document.querySelectorAll("#modelsMenu [id^='mainBrain-']");
+      items.forEach(el => el.classList.remove("active"));
+      document.getElementById(`mainBrain-${brainId}`).classList.add("active");
+    }
+
+    function selectSubBrain(brainId) {
+      selectedSubBrain = brainId;
+      vscode.postMessage({ command: "setSubAgentBrain", brainId: brainId });
+      updateModelsLabel();
+      document.getElementById("modelsMenu").classList.add("hidden");
+      
+      const items = document.querySelectorAll("#modelsMenu [id^='subBrain-']");
+      items.forEach(el => el.classList.remove("active"));
+      document.getElementById(`subBrain-${brainId}`).classList.add("active");
     }
 
     function toggleBrowserMenu() {
       const menu = document.getElementById("browserMenu");
       menu.classList.toggle("hidden");
+      document.getElementById("modeMenu").classList.add("hidden");
+      document.getElementById("modelsMenu").classList.add("hidden");
     }
 
     function toggleHeadlessOption() {
@@ -1104,9 +1241,13 @@
     }
 
     document.addEventListener("click", (e) => {
-      const wrapper = document.getElementById("modeDropdownWrapper");
-      if (wrapper && !wrapper.contains(e.target)) {
+      const modeWrapper = document.getElementById("modeDropdownWrapper");
+      if (modeWrapper && !modeWrapper.contains(e.target)) {
         document.getElementById("modeMenu").classList.add("hidden");
+      }
+      const modelsWrapper = document.getElementById("modelsDropdownWrapper");
+      if (modelsWrapper && !modelsWrapper.contains(e.target)) {
+        document.getElementById("modelsMenu").classList.add("hidden");
       }
       const browserWrapper = document.getElementById("browserDropdownWrapper");
       if (browserWrapper && !browserWrapper.contains(e.target)) {
@@ -1270,14 +1411,89 @@
       switch (message.command) {
         case "updateLog":
           renderLogItems(message.logItems);
-          document.getElementById("modeSelect").value = message.currentMode;
+          if (message.currentMode) {
+            const labels = {
+              act: "Act Mode",
+              plan: "Plan Mode",
+              auto: "Auto Mode",
+              brainstorm: "Brainstorm Mode"
+            };
+            const shortLabels = {
+              act: "Act",
+              plan: "Plan",
+              auto: "Auto",
+              brainstorm: "Brainstorm"
+            };
+            const shortText = shortLabels[message.currentMode] || message.currentMode;
+            document.getElementById("modeSelect").textContent = shortText;
+            
+            const fullText = labels[message.currentMode] || message.currentMode;
+            const items = document.querySelectorAll("#modeMenu .custom-dropdown-item");
+            items.forEach(el => {
+              if (el.textContent === fullText) {
+                el.classList.add("active");
+              } else {
+                el.classList.remove("active");
+              }
+            });
+          }
           break;
         case "setMode":
-          document.getElementById("modeSelect").value = message.mode;
+        case "syncMode":
+          if (message.mode) {
+            const labels = {
+              act: "Act Mode",
+              plan: "Plan Mode",
+              auto: "Auto Mode",
+              brainstorm: "Brainstorm Mode"
+            };
+            const shortLabels = {
+              act: "Act",
+              plan: "Plan",
+              auto: "Auto",
+              brainstorm: "Brainstorm"
+            };
+            const shortText = shortLabels[message.mode] || message.mode;
+            document.getElementById("modeSelect").textContent = shortText;
+            
+            const fullText = labels[message.mode] || message.mode;
+            const items = document.querySelectorAll("#modeMenu .custom-dropdown-item");
+            items.forEach(el => {
+              if (el.textContent === fullText) {
+                el.classList.add("active");
+              } else {
+                el.classList.remove("active");
+              }
+            });
+          }
+          break;
+        case "syncBrain":
+          if (message.brainId) {
+            selectedMainBrain = message.brainId;
+            const mainItems = document.querySelectorAll("#modelsMenu [id^='mainBrain-']");
+            mainItems.forEach(el => {
+              if (el.id === `mainBrain-${message.brainId}`) {
+                el.classList.add("active");
+              } else {
+                el.classList.remove("active");
+              }
+            });
+          }
+          if (message.subAgentBrainId) {
+            selectedSubBrain = message.subAgentBrainId;
+            const subItems = document.querySelectorAll("#modelsMenu [id^='subBrain-']");
+            subItems.forEach(el => {
+              if (el.id === `subBrain-${message.subAgentBrainId}`) {
+                el.classList.add("active");
+              } else {
+                el.classList.remove("active");
+              }
+            });
+          }
+          updateModelsLabel();
           break;
         case "spinner":
-          document.getElementById("sendBtn").disabled = message.active;
-          document.getElementById("promptInput").disabled = message.active;
+          // Keep inputs enabled so the user can queue prompts while the agent is busy/running tools
           break;
         case "brainstormRetryReady":
           {

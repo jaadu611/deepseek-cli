@@ -11,7 +11,8 @@ const fs = require("fs");
 const os = require("os");
 
 // ── Implementation plan path ─────────────────────────────────────────────────
-const PLAN_PATH = './implementation_plan.md';
+const DS_CONFIG_DIR = path.join(require('os').homedir(), '.ds_config');
+const PLAN_PATH = path.join(DS_CONFIG_DIR, 'implementation_plan.md');
 
 function readPlanHandoff(planPath) {
   try {
@@ -1121,11 +1122,7 @@ async function ask(prompt, options = {}) {
         // Hard gate: verification.md must exist if files were modified (ACT mode only)
         if (!isPlanMode && hasEditedFiles) {
           const verificationPath = path.resolve(PLAN_PATH.replace('implementation_plan.md', 'verification.md'));
-          // Also check plain ./verification.md
-          let verificationFound = fs.existsSync('./verification.md');
-          if (!verificationFound) {
-            verificationFound = fs.existsSync(verificationPath);
-          }
+          let verificationFound = fs.existsSync(verificationPath);
           if (!verificationFound) {
             const interceptMsg = `[SYSTEM INTERCEPT - MISSING verification.md]\n\nYou modified code but did NOT create a verification.md file documenting your work. This file is REQUIRED before completing a task.\n\nverification.md must include:\n- Files changed and what was modified\n- Type Cross-Reference (which interfaces/types you read and verified)\n- Build command and status (PASSED/FAILED/SKIPPED with reason)\n- Tests run and results\n- Edge cases analyzed (at least 2)\n- Self-Test Result (PASS/FAIL/SKIPPED)\n\nCreate the file now using write_file, then call attempt_completion again.`;
             currentPrompt = interceptMsg;

@@ -15,6 +15,7 @@ test/
 # Backup and log files
 *.bak
 *.log
+test-*.js
 
 # Dist and chrome profile folder
 dist/

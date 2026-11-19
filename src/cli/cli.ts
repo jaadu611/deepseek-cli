@@ -103,6 +103,62 @@ tui.input.on("submit", async (val) => {
     tui.refocusInput();
     return;
   }
+
+  // ── /brain [id] ─ Switch or list available brains ──────────────────────────
+  if (val === "/brain" || val.startsWith("/brain ")) {
+    const brainArg = val.replace("/brain", "").trim();
+    const logItems = tui.getLogItems();
+
+    if (!brainArg) {
+      // List available brains
+      const available = brainRegistry.getAvailableBrains();
+      const activeId = brainRegistry.activeBrainId;
+      let output = "## Available Brains\n\n";
+      for (const b of available) {
+        const marker = b.id === activeId ? " **(active)**" : "";
+        output += `- **${b.id}**: ${b.name}${marker}\n`;
+      }
+      output += `\nSwitch with: \`/brain <id>\``;
+      logItems.push({ type: "deepseek", text: output, spinning: false });
+      tui.renderLog();
+      tui.refocusInput();
+      return;
+    }
+
+    try {
+      brainRegistry.setActiveBrain(brainArg);
+      logItems.push({ type: "status", text: `Switched brain to: ${brainArg}` });
+      tui.setTopBarTitle(brainArg);
+
+      // Initialize the new brain
+      const brain = brainRegistry.getActiveBrain();
+      if (brain) {
+        orchestrator.setBusy(true);
+        const bootItem = { type: "status", text: `initializing ${brainArg} brain...` };
+        logItems.push(bootItem);
+        tui.startGlobalSpinner();
+        tui.renderLog();
+
+        try {
+          await brain.init();
+        } catch (e) {
+          logItems.push({ type: "error", message: `Brain init failed: ${e.message}` });
+        }
+
+        const idx = logItems.indexOf(bootItem);
+        if (idx !== -1) logItems.splice(idx, 1);
+        tui.stopGlobalSpinner();
+        tui.renderLog();
+        orchestrator.setBusy(false);
+      }
+    } catch (err) {
+      logItems.push({ type: "error", message: err.message });
+    }
+    tui.renderLog();
+    tui.refocusInput();
+    return;
+  }
+
   if (val === "/compact") {
     if (orchestrator.isBusy()) {
       tui.refocusInput();
@@ -331,6 +387,7 @@ tui.input.on("submit", async (val) => {
 
 - **/new** — Start a new chat session
 - **/chat** — Browse chat history
+- **/brain** — List or switch AI brains (deepseek-web, glm-web)
 - **/plan** — Switch to PLAN mode (read-only, model produces a plan)
 - **/act** — Switch to ACT mode (full tool access)
 - **/auto** — Switch to AUTO mode (auto-detect per turn)

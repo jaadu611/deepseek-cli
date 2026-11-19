@@ -194,6 +194,22 @@ class DeepSeekChatProvider implements vscode.WebviewViewProvider {
     // Handle messages from the webview
     webviewView.webview.onDidReceiveMessage(async (data) => {
       switch (data.command) {
+        case 'ready': {
+          const currentMode = tui.getModeBadge() || 'act';
+          const mainBrainId = brainRegistry.activeBrainId || 'deepseek-web';
+          const subAgentBrainId = brainRegistry.subAgentBrainId || 'deepseek-web';
+          webviewView.webview.postMessage({
+            command: 'syncMode',
+            mode: currentMode
+          });
+          webviewView.webview.postMessage({
+            command: 'syncBrain',
+            brainId: mainBrainId,
+            subAgentBrainId: subAgentBrainId
+          });
+          break;
+        }
+
         case 'sendMessage': {
           const text = data.text.trim();
           if (!text) return;
@@ -378,6 +394,66 @@ class DeepSeekChatProvider implements vscode.WebviewViewProvider {
               tui.renderLog();
               orchestrator.setBusy(false);
             }
+          }
+          break;
+        }
+
+        case 'setBrain': {
+          if (orchestrator.isBusy()) return;
+          try {
+            brainRegistry.setActiveBrain(data.brainId);
+            const logItems = tui.getLogItems();
+            logItems.push({ type: 'status', text: `Switched brain to: ${data.brainId}` });
+            tui.setTopBarTitle(data.brainId);
+
+            // Initialize the new brain
+            const brain = brainRegistry.getActiveBrain();
+            if (brain) {
+              orchestrator.setBusy(true);
+              const bootItem = { type: 'status', text: `initializing ${data.brainId} brain...` };
+              logItems.push(bootItem);
+              tui.startGlobalSpinner();
+              tui.renderLog();
+
+              try {
+                await brain.init();
+              } catch (e: any) {
+                logItems.push({ type: 'error', message: `Brain init failed: ${e.message}` });
+              }
+
+              const idx = logItems.indexOf(bootItem);
+              if (idx !== -1) logItems.splice(idx, 1);
+              tui.stopGlobalSpinner();
+              tui.renderLog();
+              orchestrator.setBusy(false);
+            }
+          } catch (err: any) {
+            const logItems = tui.getLogItems();
+            logItems.push({ type: 'error', message: err.message });
+            tui.renderLog();
+          }
+          break;
+        }
+
+        case 'setSubAgentBrain': {
+          try {
+            brainRegistry.setSubAgentBrain(data.brainId);
+            const logItems = tui.getLogItems();
+            logItems.push({ type: 'status', text: `Switched sub-agent brain to: ${data.brainId}` });
+            tui.renderLog();
+          } catch (err: any) {
+            const logItems = tui.getLogItems();
+            logItems.push({ type: 'error', message: err.message });
+            tui.renderLog();
+          }
+          break;
+        }
+
+        case 'deleteQueueItem': {
+          const idx = data.index;
+          if (typeof idx === 'number' && idx >= 0 && idx < promptQueue.length) {
+            promptQueue.splice(idx, 1);
+            updateQueueUI(webviewView);
           }
           break;
         }
@@ -578,13 +654,13 @@ class DeepSeekChatProvider implements vscode.WebviewViewProvider {
           
           try {
             const brain = brainRegistry.getActiveBrain();
-            if (brain && (brain.id === 'deepseek-web' || (brain.constructor && brain.constructor.id === 'deepseek-web'))) {
+            if (brain && typeof brain.cleanup === 'function' && typeof brain.init === 'function') {
               await brain.cleanup();
               brain.initPromise = null;
               await brain.init();
               logItems.push({ type: "status", text: "✓ Browser restarted successfully." });
             } else {
-              logItems.push({ type: "error", message: "Active brain is not deepseek-web." });
+              logItems.push({ type: "error", message: "Active brain does not support restart." });
             }
           } catch (err: any) {
             logItems.push({ type: "error", message: `Failed to restart browser: ${err.message}` });

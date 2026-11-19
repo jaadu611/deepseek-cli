@@ -35,6 +35,17 @@ module.exports = {
     const config = loadConfig();
     const cliDir = path.resolve(__dirname, '../../');
 
+    // Validate that every patch has a valid path
+    if (!Array.isArray(patches)) {
+      return `❌ Atomic patch FAILED. The 'patches' parameter must be an array.`;
+    }
+    for (let i = 0; i < patches.length; i++) {
+      const p = patches[i];
+      if (!p || typeof p.path !== 'string' || p.path.trim() === '') {
+        return `❌ Atomic patch FAILED. Patch at index ${i} is missing a valid 'path' property. Please specify the target file path for each patch.`;
+      }
+    }
+
     // Resolve paths and apply sandbox guard
     for (const p of patches) {
       if (p && p.path) {

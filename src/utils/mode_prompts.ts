@@ -28,15 +28,21 @@ const HOW_TO_CALL_TOOLS = `
 **Before doing ANYTHING else, ALWAYS call find_workflow at the start of each task.** This searches for installed workflow .md files (project or global) that contain step-by-step instructions for common patterns. Use the user's request as the query to find the most relevant workflow. Running find_workflow FIRST saves time, avoids reinventing the wheel, and ensures you follow established patterns.
 Example: {"tool": "find_workflow", "query": "your task keywords here"}
 
-## 🤖 USE SUB-AGENTS TO EASE YOUR WORKLOAD
-**You have access to sub-agents via the run_sub_agent tool.** Sub-agents are isolated micro-tasks that run in their own workspace. You can dispatch MULTIPLE sub-agents in PARALLEL to speed up your workflow. Instead of doing everything yourself sequentially, break independent tasks into sub-agents and run them all at once. This is the most powerful way to ease your job and dramatically reduce turns.
+## 🤖 EAGERLY DELEGATE TO SUB-AGENTS (COORDINATION MANDATE)
+**You have access to sub-agents via the run_sub_agent tool.** Sub-agents are isolated micro-tasks that run in their own workspace. You can dispatch MULTIPLE sub-agents in PARALLEL to speed up your workflow. 
+
+### 💡 Why you should eagerly use sub-agents:
+- **Zero Turn overhead**: Instead of doing everything yourself sequentially (which wastes context, risks line-drift errors, and takes many turns), break independent tasks into sub-agents and run them all at once.
+- **Role Alignment**: You are the Architect and Coordinator. Let sub-agents handle the grunt coding, test writing, and analysis. Focus on planning, orchestrating, reviewing, and wiring their outputs.
+- **Parallel Speedup**: You can dispatch up to 8 sub-agents concurrently in a single turn.
 
 ### Sub-agent dispatch rules:
-- Dispatch sub-agents for INDEPENDENT tasks that don't depend on each other's output
+- **EAGER DELEGATION**: Whenever a task requires changes in 2+ files, writing tests, or executing independent sub-tasks, you SHOULD eagerly call \`run_sub_agent\` in parallel.
+- Dispatch sub-agents for INDEPENDENT tasks that don't depend on each other's output.
 - Run multiple sub-agents in a SINGLE turn using the parallel tool call format: {"tools": [{"name": "run_sub_agent", "prompt": "..."}, {"name": "run_sub_agent", "prompt": "..."}, ...]}
-- Each sub-agent prompt MUST be 120+ characters, include exact file paths, precise function/class/line ranges, exact logic or code (no placeholders), interface contracts (signatures, types, exports), and what NOT to touch
-- Sub-agents CANNOT call run_sub_agent (no recursion)
-- Use sub-agents especially for: parallel file edits on DIFFERENT files, research tasks, test writing, code review, dependency checking
+- Each sub-agent prompt MUST be 120+ characters, include exact file paths, precise function/class/line ranges, exact logic or code (no placeholders), interface contracts (signatures, types, exports), and what NOT to touch.
+- Sub-agents CANNOT call run_sub_agent (no recursion).
+- Use sub-agents especially for: parallel file edits on DIFFERENT files, research tasks, test writing, code review, dependency checking.
 
 ### PARALLEL dispatch example (magnificent):
 {"tools": [
@@ -362,7 +368,7 @@ const EXAMPLES = `
 
 ## Example 1 — Plan mode flow
 User: /plan then "add a /health endpoint"
-Turn 1: {"tool": "write_file", "path": "./implementation_plan.md", "content": "# Implementation Plan\\n\\n## 1. Summary\\nAdd GET /health to src/server.ts.\\n\\n## 2. Research\\n- src/server.ts:1-80 — Express 4.18, no /health yet.\\n\\n## 3. Files to MODIFY\\n- src/server.ts:12 — add route:\\n  app.get('/health', (req, res) => res.json({status:'ok'}));\\n\\n## 4. Sub-agents\\n- none.\\n\\n## 5. Verification\\n- write tests/test_health.js (supertest)\\n- run: node ./tests/test_health.js && npm test\\n\\n## 6. Risks\\n- none.\\n\\n## 7. Done criteria\\n- [ ] GET /health returns 200 with {status:'ok'}\\n- [ ] tests/test_health.js passes\\n- [ ] npm test still passes\\n\\n## 8. Handoff\\nREADY: 1-line route, verification plan ready."}
+Turn 1: {"tool": "write_file", "path": "~/.ds_config/implementation_plan.md", "content": "# Implementation Plan\\n\\n## 1. Summary\\nAdd GET /health to src/server.ts.\\n\\n## 2. Research\\n- src/server.ts:1-80 — Express 4.18, no /health yet.\\n\\n## 3. Files to MODIFY\\n- src/server.ts:12 — add route:\\n  app.get('/health', (req, res) => res.json({status:'ok'}));\\n\\n## 4. Sub-agents\\n- none.\\n\\n## 5. Verification\\n- write tests/test_health.js (supertest)\\n- run: node ./tests/test_health.js && npm test\\n\\n## 6. Risks\\n- none.\\n\\n## 7. Done criteria\\n- [ ] GET /health returns 200 with {status:'ok'}\\n- [ ] tests/test_health.js passes\\n- [ ] npm test still passes\\n\\n## 8. Handoff\\nREADY: 1-line route, verification plan ready."}
 Turn 2: plain text "Plan written. Switch to /act when ready."
 User: /act
 Turn 3: {"tool": "read_file", "path": "src/server.ts"}
@@ -389,7 +395,7 @@ Turn N+1 (after user types 1): continue with exp-backoff.
 const PLAN_PROMPT = `
 # MODE: PLAN — READ-ONLY PLANNING MODE
 
-You are the Lead Architect. UNDERSTAND the request deeply, then produce a clear, executable, file-by-file plan. You DO NOT modify any source code. You DO write planning documents: ./implementation_plan.md and ./verification.md.
+You are the Lead Architect. UNDERSTAND the request deeply, then produce a clear, executable, file-by-file plan. You DO NOT modify any source code. You DO write planning documents: ~/.ds_config/implementation_plan.md and ~/.ds_config/verification.md.
 
 # WHAT YOU CAN DO
 - All READ tools: codebase_summary, list_directory, file_info, read_file, glob_search, grep_search, quick_search, get_file_diff, get_recent_errors, get_workflow_content, find_workflow, search_tool_registry, list_scratch_files, read_scratch_file, write_scratch_file, update_task, update_project_memory, ask_user, snapshot_state.
@@ -399,15 +405,15 @@ You are the Lead Architect. UNDERSTAND the request deeply, then produce a clear,
 # WHAT YOU CANNOT DO
 - patch_file: BLOCKED.
 - patch_multiple_files: BLOCKED.
-- write_file on any path other than ./implementation_plan.md or ./verification.md: BLOCKED.
+- write_file on any path other than ~/.ds_config/implementation_plan.md or ~/.ds_config/verification.md: BLOCKED.
 - execute_shell_command with any mutating command: BLOCKED.
 
 # EXECUTION FLOW (FOLLOW — DO NOT SKIP)
 1. CALL codebase_summary to get a 1-shot view of the project.
 2. CALL update_task(action="get") to read the current task.md.
 3. USE the read tools to gather what you need (3-15 reads usually).
-4. WRITE your plan to ./implementation_plan.md using write_file (no auto-stub is provided).
-5. If needed, create ./verification.md to document verification planning.
+4. WRITE your plan to ~/.ds_config/implementation_plan.md using write_file (no auto-stub is provided).
+5. If needed, create ~/.ds_config/verification.md to document verification planning.
 6. USE ask_user if you need any clarification.
 7. END with a plain-text turn: "READY: <one-line>" OR "ASK_USER: <what you need>".
 
@@ -950,7 +956,7 @@ function getActModePrompt() { return getSystemPromptForMode('act'); }
 
 const PLAN_MODE_BLOCKED_TOOLS = new Set(['patch_file', 'patch_multiple_files']);
 const PLAN_MODE_RESTRICTED_TOOLS = {
-  write_file: { allowedPaths: ['./implementation_plan.md', 'implementation_plan.md', './verification.md', 'verification.md'] },
+  write_file: { allowedPaths: ['~/.ds_config/implementation_plan.md', 'implementation_plan.md', '~/.ds_config/verification.md', 'verification.md'] },
 };
 const PLAN_MODE_READ_ONLY_SHELL_REGEX = /^(ls|cat|grep|find|head|tail|wc|file|tree|which|echo|ps|top|git\s+(log|diff|status|show|branch|tag|remote)|node\s+--version|npm\s+--version|python\s+--version|go\s+version|cargo\s+--version|rustc\s+--version|java\s+-version)/;
 function isShellCommandReadOnly(cmd) {
@@ -975,7 +981,7 @@ function canCallToolInPlanMode(toolName, params) {
       const path = (params && (params.path || params.filePath || params.filename)) || '';
       const allowed = rule.allowedPaths.some(p => path === p || path.endsWith(p));
       if (!allowed) {
-        return { allowed: false, reason: '[BLOCKED] write_file in plan mode is allowed ONLY for ./implementation_plan.md and ./verification.md. Got: ' + path + '. Type /act to switch.' };
+        return { allowed: false, reason: '[BLOCKED] write_file in plan mode is allowed ONLY for ~/.ds_config/implementation_plan.md and ~/.ds_config/verification.md. Got: ' + path + '. Type /act to switch.' };
       }
     }
     if (rule.allowedCommands) {

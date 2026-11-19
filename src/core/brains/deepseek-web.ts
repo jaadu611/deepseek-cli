@@ -4,6 +4,15 @@ const { chromium } = require("playwright");
 const { execSync } = require("child_process");
 const http = require("http");
 
+async function gotoWithWait(page, url) {
+  try {
+    await page.goto(url, { waitUntil: "domcontentloaded" });
+  } catch (err) {}
+  try {
+    await page.waitForSelector('textarea, div[contenteditable="true"]', { timeout: 5000 });
+  } catch (err) {}
+}
+
 class DeepSeekWebBrain extends BaseBrain {
   constructor() {
     super();
@@ -43,6 +52,20 @@ class DeepSeekWebBrain extends BaseBrain {
     return this.pageStates.get(page);
   }
 
+  async isCDPAlive(port = 9222) {
+    const http = require("http");
+    return new Promise((resolve) => {
+      const req = http.get(`http://127.0.0.1:${port}/json/version`, (res) => {
+        resolve(res.statusCode === 200);
+      });
+      req.on("error", () => resolve(false));
+      req.setTimeout(800, () => {
+        req.destroy();
+        resolve(false);
+      });
+    });
+  }
+
   async getBrowserConnection() {
     if (this.browser) {
       try {
@@ -55,7 +78,11 @@ class DeepSeekWebBrain extends BaseBrain {
     }
     if (this.connectingPromise) return this.connectingPromise;
     this.connectingPromise = (async () => {
-      await this.waitForCDP();
+      const alive = await this.isCDPAlive(9222);
+      if (!alive) {
+        this.launchBrowser();
+        await this.waitForCDP(9222, 15000);
+      }
       const browser = await chromium.connectOverCDP("http://127.0.0.1:9222");
       this.browser = browser;
       this.context = browser.contexts()[0];
@@ -76,7 +103,7 @@ class DeepSeekWebBrain extends BaseBrain {
     await this.getBrowserConnection();
     const page = await this.context.newPage();
     await this.setupInterceptors(page);
-    await page.goto("https://chat.deepseek.com/").catch(() => { });
+    await gotoWithWait(page, "https://chat.deepseek.com/");
     return page;
   }
 
@@ -120,7 +147,7 @@ class DeepSeekWebBrain extends BaseBrain {
       );
       if (session && session.deepseek_id) {
         if (!currentUrl.includes(session.deepseek_id)) {
-          await page.goto(`https://chat.deepseek.com/a/chat/s/${session.deepseek_id}`).catch(() => { });
+          await gotoWithWait(page, `https://chat.deepseek.com/a/chat/s/${session.deepseek_id}`);
           await this.setupInterceptors(page);
         }
       } else {
@@ -174,11 +201,11 @@ class DeepSeekWebBrain extends BaseBrain {
 
           // If the click failed to navigate away from the session URL, reload to the new chat page
           if (page.url().includes("/a/chat/s/")) {
-            await page.goto("https://chat.deepseek.com/").catch(() => { });
+            await gotoWithWait(page, "https://chat.deepseek.com/");
             await this.setupInterceptors(page);
           }
         } else if (!currentUrl.includes("chat.deepseek.com")) {
-          await page.goto("https://chat.deepseek.com/").catch(() => { });
+          await gotoWithWait(page, "https://chat.deepseek.com/");
           await this.setupInterceptors(page);
         }
       }
@@ -229,20 +256,34 @@ class DeepSeekWebBrain extends BaseBrain {
     }
 
     // Lock onto the exact absolute path inside your home directory
+    const fs = require("fs");
     const profilePath = path.join(os.homedir(), ".ds_config", "scraper-profile");
+    if (!fs.existsSync(profilePath)) {
+      fs.mkdirSync(profilePath, { recursive: true });
+    }
 
-    const config = require("../../utils/config").loadConfig();
+    // Clean up stale lock files from crashes/pkills
+    try { fs.unlinkSync(path.join(profilePath, "SingletonLock")); } catch (e) {}
+    try { fs.unlinkSync(path.join(profilePath, "SingletonCookie")); } catch (e) {}
+    try { fs.unlinkSync(path.join(profilePath, "SingletonSocket")); } catch (e) {}
+
+    let config = { headless: false };
+    try {
+      config = require("../../utils/config").loadConfig();
+    } catch (e) {}
+
     const spawnArgs = [
       "--remote-debugging-port=9222",
       `--user-data-dir=${profilePath}`,
       `--user-agent=${userAgent}`
     ];
 
-    if (config.headless) {
+    if (config && config.headless) {
       spawnArgs.push("--headless=new");
     }
 
-    const child = spawn("chromium", spawnArgs, {
+    const browserBin = fs.existsSync("/usr/bin/chromium") ? "/usr/bin/chromium" : "chromium";
+    const child = spawn(browserBin, spawnArgs, {
       detached: true,
       stdio: "ignore",
     });
@@ -314,7 +355,7 @@ class DeepSeekWebBrain extends BaseBrain {
       if (!page) {
         page = await this.context.newPage();
         await this.setupInterceptors(page);
-        await page.goto("https://chat.deepseek.com/").catch(() => { });
+        await gotoWithWait(page, "https://chat.deepseek.com/");
       } else {
         await this.setupInterceptors(page);
         await this.handleHumanVerification(page);
@@ -333,7 +374,9 @@ class DeepSeekWebBrain extends BaseBrain {
       await page.exposeFunction("_onNetworkChunk", (text) => this.processNetworkChunk(page, text));
       await page.exposeFunction("_onStreamEnd", () => {
         const state = this.getOrCreatePageState(page);
-        state.streamDone = true;
+        if (state.thinkingChunks.length > 0 || state.responseChunks.length > 0) {
+          state.streamDone = true;
+        }
       });
 
       const installFn = () => {
@@ -435,19 +478,71 @@ class DeepSeekWebBrain extends BaseBrain {
 
   async submitPrompt(page, prompt, options = {}) {
     // CRITICAL: Bring this tab to front before interacting
-    // Without this, prompts go to the wrong tab when multiple tabs are open
     try { await page.bringToFront(); } catch (e) { }
     await new Promise(r => setTimeout(r, 200));
 
-    const textarea = page.locator("textarea").first();
-    await textarea.waitFor({ state: "visible", timeout: 10000 });
-    await page.waitForFunction(
-      (ta) => !ta.disabled && !ta.readOnly,
-      textarea.elementHandle(),
-      { timeout: 5000 }
-    );
-    await textarea.fill(prompt);
-    await textarea.focus();
+    // Wait until DeepSeek is idle (no Stop button, textarea enabled)
+    const waitStart = Date.now();
+    while (Date.now() - waitStart < 300000) {
+      const isBusy = await page.evaluate(() => {
+        const stopBtn = document.querySelector('button[aria-label*="Stop"i], div[role="button"][aria-label*="Stop"i], .ds-icon--stop');
+        const ta = document.querySelector('textarea');
+        return !!stopBtn || (ta ? ta.disabled || ta.readOnly : true);
+      });
+      if (!isBusy) break;
+      await new Promise(r => setTimeout(r, 600));
+    }
+
+    // Attach image if provided
+    if (options.imagePath) {
+      try {
+        const fs = require('fs');
+        if (fs.existsSync(options.imagePath) && fs.statSync(options.imagePath).size > 100) {
+          const fileInput = page.locator('input[type="file"]').first();
+          if (await fileInput.count() > 0) {
+            await fileInput.setInputFiles(options.imagePath);
+            await new Promise(r => setTimeout(r, 1200));
+          }
+        }
+      } catch (err) {
+        console.error('[DeepSeek Web] Failed to set image input:', err);
+      }
+    }
+
+    // Chunked natural input typing simulation (anti-bot protection)
+    const chunkSize = 200 + Math.floor(Math.random() * 150);
+    let currentPos = 0;
+    while (currentPos < prompt.length) {
+      const nextChunk = prompt.slice(currentPos, currentPos + chunkSize);
+      currentPos += chunkSize;
+
+      await page.evaluate((chunk) => {
+        const ta = document.querySelector('textarea');
+        if (!ta) throw new Error('Textarea not found');
+        ta.focus();
+        const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set;
+        const newVal = (ta.value || '') + chunk;
+        if (nativeSetter) {
+          nativeSetter.call(ta, newVal);
+        } else {
+          ta.value = newVal;
+        }
+        ta.dispatchEvent(new Event('input', { bubbles: true }));
+      }, nextChunk);
+
+      const chunkWait = Math.floor(Math.random() * 40) + 25;
+      await new Promise(r => setTimeout(r, chunkWait));
+    }
+
+    await page.evaluate(() => {
+      const ta = document.querySelector('textarea');
+      if (ta) {
+        ta.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    });
+
+    const postTypeWait = Math.floor(Math.random() * 700) + 500;
+    await new Promise(r => setTimeout(r, postTypeWait));
 
     // Toggle search based on options (default to true)
     const enableSearch = options.webSearch !== false;
@@ -497,24 +592,22 @@ class DeepSeekWebBrain extends BaseBrain {
       }, enableSearch);
     } catch (e) { }
 
-    const sendSelectors = [
-      'button[aria-label="Send Message"]',
-      'button[aria-label="Send"]',
-      'button[type="submit"]',
-      'div[role="button"][aria-label*="end"]',
-    ];
-    let sent = false;
-    for (const sel of sendSelectors) {
-      try {
-        const btn = page.locator(sel).last();
-        if (await btn.isVisible({ timeout: 100 })) {
-          await btn.click();
-          sent = true;
-          break;
+    // Click send button
+    let clicked = false;
+    for (let i = 0; i < 20; i++) {
+      clicked = await page.evaluate(() => {
+        const btn = document.querySelector('div.ds-button--primary, button[aria-label*="Send"i], div[role="button"][aria-label*="Send"i]');
+        if (btn && !btn.classList.contains('ds-button--disabled')) {
+          (btn as HTMLElement).click();
+          return true;
         }
-      } catch { }
+        return false;
+      });
+      if (clicked) break;
+      await new Promise(r => setTimeout(r, 100));
     }
-    if (!sent) {
+    if (!clicked) {
+      const textarea = page.locator('textarea').first();
       await textarea.focus();
       await textarea.press("Enter");
     }
@@ -532,6 +625,41 @@ class DeepSeekWebBrain extends BaseBrain {
       });
       return statusText === "Stopped";
     } catch (err) {
+      return false;
+    }
+  }
+
+  async checkAndClickContinueButton(page) {
+    try {
+      const clicked = await page.evaluate(() => {
+        const candidates = Array.from(
+          document.querySelectorAll(
+            'button, div[role="button"], span[role="button"], .ds-button, a[role="button"]'
+          )
+        );
+        for (const el of candidates) {
+          const text = (el.textContent || "").trim().toLowerCase();
+          const aria = (el.getAttribute("aria-label") || "").trim().toLowerCase();
+          if (
+            text === "continue" ||
+            text === "continue generating" ||
+            text.includes("continue generating") ||
+            text === "继续" ||
+            text === "继续生成" ||
+            aria.includes("continue") ||
+            aria.includes("继续")
+          ) {
+            const rect = el.getBoundingClientRect();
+            if (rect.width > 0 && rect.height > 0) {
+              el.click();
+              return true;
+            }
+          }
+        }
+        return false;
+      });
+      return clicked;
+    } catch (e) {
       return false;
     }
   }
@@ -575,30 +703,17 @@ class DeepSeekWebBrain extends BaseBrain {
       try { await activePage.bringToFront(); } catch (e) { }
       await new Promise(r => setTimeout(r, 150));
 
+      // Anti-bot human pacing: random delay between 1.5s and 3.5s before submitting
+      const antiBotDelay = Math.floor(Math.random() * 2000) + 1500;
+      await new Promise(r => setTimeout(r, antiBotDelay));
+
       await this.submitPrompt(activePage, prompt, options);
 
-      // Wait for first chunk
-      const CHUNK_TIMEOUT = 15000;
-      const chunkStart = Date.now();
+      // Wait for first chunk (no timeout, wait indefinitely)
       let firstChunkSeen = false;
-      let failedToStart = false;
 
       while (!state.thinkingChunks.length && !state.responseChunks.length && !state.streamDone) {
-        if (Date.now() - chunkStart > CHUNK_TIMEOUT) {
-          failedToStart = true;
-          break;
-        }
         await new Promise((r) => setTimeout(r, 50));
-      }
-
-      if (failedToStart) {
-        require("fs").appendFileSync(
-          "/tmp/deepseek-cli-debug.log",
-          `[Brain] Attempt ${attempt} failed to start streaming within ${CHUNK_TIMEOUT}ms. Reloading and retrying...\n`
-        );
-        await activePage.reload().catch(() => { });
-        await new Promise((r) => setTimeout(r, 2000));
-        continue;
       }
 
       const IDLE_TIMEOUT_MS = 12000000;
@@ -655,6 +770,56 @@ class DeepSeekWebBrain extends BaseBrain {
         }
       }
 
+      // Auto-continue loop if response was truncated before complete JSON
+      let continueAttempts = 0;
+      const maxContinues = 5;
+      while (continueAttempts < maxContinues) {
+        if (state.streamBuffer.trim()) this.processNetworkChunk(activePage, "\n");
+        const respSoFar = state.responseChunks.join("");
+        if (hasCompleteJSON(respSoFar)) {
+          break;
+        }
+
+        await new Promise((r) => setTimeout(r, 600));
+        let clicked = await this.checkAndClickContinueButton(activePage);
+        if (!clicked) {
+          await new Promise((r) => setTimeout(r, 800));
+          clicked = await this.checkAndClickContinueButton(activePage);
+        }
+
+        if (!clicked) {
+          break;
+        }
+
+        continueAttempts++;
+        require("fs").appendFileSync(
+          "/tmp/deepseek-cli-debug.log",
+          `[Brain] Clicked 'Continue' button (attempt ${continueAttempts}). Resuming stream listener...\n`
+        );
+
+        state.streamDone = false;
+        lastDataTime = Date.now();
+
+        while (!state.streamDone && !checkDone()) {
+          await new Promise((r) => setTimeout(r, 100));
+          const curThink = state.thinkingChunks.join("");
+          const curResp = state.responseChunks.join("");
+          const curLen = curThink.length + curResp.length;
+          if (curLen > lastLen) {
+            lastDataTime = Date.now();
+            lastLen = curLen;
+          }
+          if (onProgress) {
+            onProgress({
+              thinking: curThink,
+              text: curResp,
+              thinkingStartTime: state.thinkingStartTime,
+              thinkingEndTime: state.thinkingEndTime,
+            });
+          }
+        }
+      }
+
       // Check DOM for explicit "Stopped" status
       const explicitlyStopped = await this.isGenerationStopped(activePage);
       if (explicitlyStopped) {
@@ -688,13 +853,12 @@ class DeepSeekWebBrain extends BaseBrain {
           return { thinkingText: thinkSoFar, responseText: respSoFar };
         }
 
-        // Only reload and retry if we got almost nothing
+        // Retry without reloading the active page to preserve session context
         require("fs").appendFileSync(
           "/tmp/deepseek-cli-debug.log",
-          `[Brain] Attempt ${attempt} stopped prematurely with only ${totalLen} chars. Reloading and retrying...\n`
+          `[Brain] Attempt ${attempt} stopped prematurely with only ${totalLen} chars. Retrying...\n`
         );
-        await activePage.reload().catch(() => { });
-        await new Promise((r) => setTimeout(r, 3000));
+        await new Promise((r) => setTimeout(r, 1500));
         continue;
       }
 
@@ -706,10 +870,9 @@ class DeepSeekWebBrain extends BaseBrain {
       if (!thinkSoFar.trim() && !respSoFar.trim()) {
         require("fs").appendFileSync(
           "/tmp/deepseek-cli-debug.log",
-          `[Brain] Attempt ${attempt} returned completely empty response. Reloading and retrying...\n`
+          `[Brain] Attempt ${attempt} returned completely empty response. Retrying prompt...\n`
         );
-        await activePage.reload().catch(() => { });
-        await new Promise((r) => setTimeout(r, 3000));
+        await new Promise((r) => setTimeout(r, 1500));
         continue;
       }
 
@@ -722,7 +885,12 @@ class DeepSeekWebBrain extends BaseBrain {
         });
       }
 
-      return { thinkingText: thinkSoFar, responseText: respSoFar };
+      // Sanitize response: strip any raw <think> tags if leaked into responseText
+      const cleanedResponse = respSoFar
+        .replace(/<think>[\s\S]*?<\/think>/gi, "")
+        .trim();
+
+      return { thinkingText: thinkSoFar.trim(), responseText: cleanedResponse };
     }
 
     throw new Error("DeepSeek failed to complete generation after multiple attempts.");
@@ -795,7 +963,7 @@ class DeepSeekWebBrain extends BaseBrain {
     const clicked = await this._clickNewChatButton();
     if (!clicked) {
       // Fallback: navigate directly to chat home
-      await page.goto("https://chat.deepseek.com/").catch(() => { });
+      await gotoWithWait(page, "https://chat.deepseek.com/");
       await this.setupInterceptors(page);
     }
 

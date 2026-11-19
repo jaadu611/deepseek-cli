@@ -80,20 +80,34 @@ function getBackupsPath() {
 
 function resolveSubAgentPath(filePath) {
   if (!filePath || typeof filePath !== 'string') return filePath;
+  const filename = path.basename(filePath);
+  const resolved = path.resolve(filePath);
+  const relative = path.relative(process.cwd(), resolved);
+
   const store = subAgentStorage.getStore();
   if (store && store.subAgentDir) {
-    const filename = path.basename(filePath);
-    const resolved = path.resolve(filePath);
-    const relative = path.relative(process.cwd(), resolved);
-
     // Redirect implementation plan and task lists
-    if (filename === 'implementation_plan.md' || filename === 'task.md') {
+    if (filename === 'implementation_plan.md' || filename === 'task.md' || filename === 'verification.md') {
       return path.join(store.subAgentDir, filename);
     }
     
     // Redirect scratch files
     if (relative.includes('scratch') || filePath.includes('scratch')) {
       return path.join(store.subAgentDir, 'scratch', filename);
+    }
+  } else {
+    // Main Agent
+    if (filename === 'implementation_plan.md' || filename === 'verification.md') {
+      return path.join(DS_CONFIG_DIR, filename);
+    }
+    if (filename === 'task.md') {
+      const scratchDir = getScratchPath();
+      return path.join(scratchDir, filename);
+    }
+    // Redirect scratch files to the session scratch folder
+    if (relative.includes('scratch') || filePath.includes('scratch')) {
+      const scratchDir = getScratchPath();
+      return path.join(scratchDir, filename);
     }
   }
   return filePath;
